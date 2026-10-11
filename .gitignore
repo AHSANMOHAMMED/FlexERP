@@ -51,3 +51,7 @@ package.json
 /man/
 /share/
 /src/
+
+# local duplicate and debug logs
+*.log
+/odoo-20.0/
