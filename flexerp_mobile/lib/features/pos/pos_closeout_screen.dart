@@ -177,14 +177,25 @@ class _PosCloseoutScreenState extends ConsumerState<PosCloseoutScreen> {
                 icon: Icons.lock_outline,
                 variant: FlexButtonVariant.danger,
                 height: 48,
-                onPressed: () {
-                  ref.read(posSessionProvider.notifier).closeSession();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      backgroundColor: FlexColors.success,
-                      content: Text('POS Shift successfully closed and synced to Odoo backend!'),
-                    ),
-                  );
+                onPressed: () async {
+                  try {
+                    await ref.read(posSessionProvider.notifier).closeSession();
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        backgroundColor: FlexColors.success,
+                        content: Text('POS shift closed.'),
+                      ),
+                    );
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        backgroundColor: FlexColors.danger,
+                        content: Text('Close failed: $e'),
+                      ),
+                    );
+                  }
                 },
               )
             else

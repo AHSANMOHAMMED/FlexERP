@@ -1,20 +1,31 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/theme/flex_colors.dart';
 import '../../core/theme/flex_typography.dart';
 import '../../core/widgets/flex_card.dart';
 import '../../core/widgets/flex_button.dart';
 import '../../core/localization/lk_formatters.dart';
+import '../../core/live/live_sync.dart';
+import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/pos_repository.dart';
+import '../../data/repositories/vendor_repository.dart';
+import 'pos_receipt_screen.dart';
 
 class PosTenderScreen extends ConsumerStatefulWidget {
   final double totalAmount;
   final VoidCallback onOrderComplete;
+  final int? partnerId;
+  final bool createInvoice;
 
   const PosTenderScreen({
     super.key,
     required this.totalAmount,
     required this.onOrderComplete,
+    this.partnerId,
+    this.createInvoice = false,
   });
 
   @override
@@ -24,6 +35,11 @@ class PosTenderScreen extends ConsumerStatefulWidget {
 class _PosTenderScreenState extends ConsumerState<PosTenderScreen> {
   String _paymentMethod = 'Cash';
   late double _tenderedAmount;
+  bool _busy = false;
+  String? _payRef;
+  String? _payUrl;
+  String? _payStatus;
+  Timer? _pollTimer;
 
   @override
   void initState() {
@@ -31,23 +47,124 @@ class _PosTenderScreenState extends ConsumerState<PosTenderScreen> {
     _tenderedAmount = widget.totalAmount;
   }
 
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
   double get _changeDue => (_tenderedAmount - widget.totalAmount).clamp(0.0, double.infinity);
 
-  void _completeSale() {
-    if (_paymentMethod == 'Cash') {
-      ref.read(posSessionProvider.notifier).recordSale(cashAmount: widget.totalAmount, cardAmount: 0);
-    } else {
-      ref.read(posSessionProvider.notifier).recordSale(cashAmount: 0, cardAmount: widget.totalAmount);
+  Future<void> _startLankaQr() async {
+    final api = ref.read(flexerpApiProvider);
+    final features = ref.read(currentVendorFeaturesProvider);
+    if (!features.enablePayments) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Payments feature disabled for this vendor')),
+      );
+      return;
+    }
+    if (api == null) {
+      setState(() {
+        _payStatus = 'not_configured';
+        _payUrl = 'flexerp://demo-pay';
+        _payRef = 'DEMO-PAY';
+      });
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final link = await api.paymentLinkCreate(
+        amount: widget.totalAmount,
+        orderRef: 'POS-${DateTime.now().millisecondsSinceEpoch}',
+      );
+      setState(() {
+        _payRef = link['reference']?.toString();
+        _payUrl = link['pay_url']?.toString();
+        _payStatus = link['status']?.toString() ?? 'pending';
+        _busy = false;
+      });
+      if (_payStatus == 'not_configured') {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(link['message']?.toString() ?? 'Gateway not configured — use Cash'),
+            backgroundColor: FlexColors.warning,
+          ),
+        );
+        return;
+      }
+      _pollTimer?.cancel();
+      _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) => _pollPayStatus());
+    } catch (e) {
+      setState(() => _busy = false);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Pay link failed: $e'), backgroundColor: FlexColors.danger),
+      );
+    }
+  }
+
+  Future<void> _pollPayStatus() async {
+    final api = ref.read(flexerpApiProvider);
+    final refCode = _payRef;
+    if (api == null || refCode == null) return;
+    final status = await api.paymentLinkStatus(refCode);
+    final st = status['status']?.toString();
+    if (!mounted) return;
+    setState(() => _payStatus = st);
+    if (st == 'paid') {
+      _pollTimer?.cancel();
+      await _completeSale(forceQrPaid: true);
+    }
+  }
+
+  Future<void> _markStubPaid() async {
+    final api = ref.read(flexerpApiProvider);
+    if (api != null && _payRef != null) {
+      await api.paymentLinkStatus(_payRef!, markPaid: true);
+    }
+    setState(() => _payStatus = 'paid');
+    await _completeSale(forceQrPaid: true);
+  }
+
+  Future<void> _completeSale({bool forceQrPaid = false}) async {
+    if (_busy) return;
+    if (_paymentMethod == 'LankaQR' && !forceQrPaid && _payStatus != 'paid') {
+      await _startLankaQr();
+      return;
     }
 
-    ref.read(posCartProvider.notifier).completeCheckoutAndDeductStock();
-    Navigator.pop(context);
-    widget.onOrderComplete();
+    setState(() => _busy = true);
+    final methodKey = _paymentMethod == 'Cash'
+        ? 'cash'
+        : _paymentMethod == 'LankaQR'
+            ? 'qr'
+            : 'card';
+    final cash = _paymentMethod == 'Cash' ? widget.totalAmount : 0.0;
+    final card = _paymentMethod == 'Cash' ? 0.0 : widget.totalAmount;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: FlexColors.success,
-        content: Text('POS Order complete! Change Due: ${LkFormatters.formatLkr(_changeDue)}'),
+    final features = ref.read(currentVendorFeaturesProvider);
+    final result = await ref.read(posCartProvider.notifier).completeCheckoutAndPush(
+          paymentMethod: methodKey,
+          cashAmount: cash,
+          cardAmount: card,
+          partnerId: widget.partnerId,
+          createInvoice: widget.createInvoice && features.enableInvoicing,
+        );
+
+    ref.read(liveSyncProvider.notifier).notifyLocal(type: 'sale');
+
+    if (!mounted) return;
+    setState(() => _busy = false);
+    widget.onOrderComplete();
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PosReceiptScreen(
+          checkoutResult: Map<String, dynamic>.from(result),
+          changeDue: _changeDue,
+        ),
       ),
     );
   }
@@ -64,7 +181,6 @@ class _PosTenderScreenState extends ConsumerState<PosTenderScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Prominent Amount To Pay
             FlexCard(
               backgroundColor: FlexColors.surfaceRaisedDark,
               child: Column(
@@ -83,8 +199,6 @@ class _PosTenderScreenState extends ConsumerState<PosTenderScreen> {
               ),
             ),
             const SizedBox(height: 20),
-
-            // Payment Method Selector
             Text('PAYMENT METHOD', style: FlexTypography.labelSm),
             const SizedBox(height: 8),
             Row(
@@ -107,12 +221,14 @@ class _PosTenderScreenState extends ConsumerState<PosTenderScreen> {
                   icon: Icons.qr_code_2,
                   label: 'LankaQR',
                   isSelected: _paymentMethod == 'LankaQR',
-                  onTap: () => setState(() => _paymentMethod = 'LankaQR'),
+                  onTap: () async {
+                    setState(() => _paymentMethod = 'LankaQR');
+                    await _startLankaQr();
+                  },
                 ),
               ],
             ),
             const SizedBox(height: 20),
-
             if (_paymentMethod == 'Cash') ...[
               Text('CASH QUICK-TENDER BUTTONS', style: FlexTypography.labelSm),
               const SizedBox(height: 8),
@@ -139,8 +255,6 @@ class _PosTenderScreenState extends ConsumerState<PosTenderScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-
-              // Change Due Card
               FlexCard(
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -149,7 +263,8 @@ class _PosTenderScreenState extends ConsumerState<PosTenderScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text('Change to Return', style: FlexTypography.labelLg),
-                        Text('Tendered: ${LkFormatters.formatLkr(_tenderedAmount)}', style: FlexTypography.bodySm),
+                        Text('Tendered: ${LkFormatters.formatLkr(_tenderedAmount)}',
+                            style: FlexTypography.bodySm),
                       ],
                     ),
                     Text(
@@ -161,46 +276,53 @@ class _PosTenderScreenState extends ConsumerState<PosTenderScreen> {
               ),
               const SizedBox(height: 20),
             ],
-
-            // Receipt Options
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.print, size: 18),
-                    label: const Text('ESC/POS Print'),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: FlexColors.borderDark),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    onPressed: () {},
-                  ),
+            if (_paymentMethod == 'LankaQR') ...[
+              FlexCard(
+                child: Column(
+                  children: [
+                    Text('LankaQR / JustPay link', style: FlexTypography.labelLg),
+                    const SizedBox(height: 8),
+                    Text('Status: ${_payStatus ?? 'idle'}', style: FlexTypography.bodySm),
+                    if (_payUrl != null && _payUrl!.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      QrImageView(
+                        data: _payUrl!,
+                        size: 180,
+                        backgroundColor: Colors.white,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(_payRef ?? '', style: FlexTypography.bodySm),
+                    ],
+                    if (_payStatus == 'pending' || _payStatus == 'not_configured') ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _payStatus == 'not_configured'
+                            ? 'Gateway not configured — use Cash, or mark stub paid for testing.'
+                            : 'Waiting for payment… polling every 3s',
+                        style: FlexTypography.bodySm,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: _markStubPaid,
+                        child: const Text('Mark paid (test / stub)'),
+                      ),
+                    ],
+                  ],
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.email_outlined, size: 18),
-                    label: const Text('E-Receipt'),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: FlexColors.borderDark),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    onPressed: () {},
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-
-            // Confirm Sale
+              ),
+              const SizedBox(height: 20),
+            ],
             FlexButton(
-              label: 'Complete & Print Receipt',
+              label: _busy
+                  ? 'Processing…'
+                  : _paymentMethod == 'LankaQR' && _payStatus != 'paid'
+                      ? 'Generate / Await LankaQR'
+                      : 'Complete & Show Receipt',
               icon: Icons.check,
               variant: FlexButtonVariant.primary,
               height: 50,
-              onPressed: _completeSale,
+              onPressed: _busy ? null : () => _completeSale(),
             ),
           ],
         ),

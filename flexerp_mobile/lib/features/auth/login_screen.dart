@@ -53,6 +53,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
         isDemo: isDemo,
+        enforceHttps: serverConfig.enforceHttps,
       );
       if (mounted) {
         widget.onLoginSuccess();
@@ -68,13 +69,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
-  void _quickSelectRole(UserRole role, String email) {
+  Future<void> _quickSelectRole(UserRole role, String email) async {
     setState(() {
       _emailController.text = email;
       _passwordController.text = 'admin123';
+      _isLoading = true;
     });
-    ref.read(currentUserProvider.notifier).switchRole(role);
-    widget.onLoginSuccess();
+    try {
+      final serverConfig = ref.read(serverConfigProvider);
+      await ref.read(currentUserProvider.notifier).login(
+        serverUrl: serverConfig.serverUrl,
+        database: serverConfig.database,
+        email: email,
+        password: 'admin123',
+        isDemo: true,
+      );
+      ref.read(currentUserProvider.notifier).switchRole(role);
+      if (mounted) widget.onLoginSuccess();
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override
@@ -251,6 +265,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 email: 'admin@flexcorp.lk',
                 icon: Icons.admin_panel_settings,
                 onTap: () => _quickSelectRole(UserRole.superAdmin, 'admin@flexcorp.lk'),
+              ),
+              _RoleSelectTile(
+                title: 'Ruwan Perera',
+                roleLabel: 'Vendor Admin (slot only)',
+                email: 'vendor@flexcorp.lk',
+                icon: Icons.store,
+                onTap: () => _quickSelectRole(UserRole.vendorAdmin, 'vendor@flexcorp.lk'),
               ),
               _RoleSelectTile(
                 title: 'Nimal Perera',

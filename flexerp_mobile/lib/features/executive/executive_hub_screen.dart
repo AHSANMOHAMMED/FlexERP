@@ -10,8 +10,9 @@ import '../../core/localization/lk_formatters.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/admin_repository.dart';
 import '../../data/repositories/sales_repository.dart';
+import '../../data/repositories/executive_repository.dart';
 
-class ExecutiveHubScreen extends ConsumerWidget {
+class ExecutiveHubScreen extends ConsumerStatefulWidget {
   final VoidCallback? onNavigateToBarcode;
   final VoidCallback? onNavigateToCreateOrder;
   final VoidCallback? onNavigateToStock;
@@ -26,10 +27,22 @@ class ExecutiveHubScreen extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ExecutiveHubScreen> createState() => _ExecutiveHubScreenState();
+}
+
+class _ExecutiveHubScreenState extends ConsumerState<ExecutiveHubScreen> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() => ref.read(executiveKpisProvider.notifier).syncFromServer());
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final currentBranch = ref.watch(currentBranchProvider);
     final pendingApprovals = ref.watch(pendingApprovalsProvider);
     final salesOrders = ref.watch(saleOrdersProvider);
+    final kpis = ref.watch(executiveKpisProvider);
 
     return Scaffold(
       backgroundColor: FlexColors.canvasDark,
@@ -44,6 +57,7 @@ class ExecutiveHubScreen extends ConsumerWidget {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Refreshing Executive KPIs & Orders from Odoo...')),
           );
+          await ref.read(executiveKpisProvider.notifier).syncFromServer();
           await ref.read(saleOrdersProvider.notifier).syncFromOdoo();
           await ref.read(crmLeadsProvider.notifier).syncFromOdoo();
         },
@@ -61,29 +75,29 @@ class ExecutiveHubScreen extends ConsumerWidget {
                 children: [
                   _KpiCard(
                     title: "TODAY'S REVENUE",
-                    value: 'Rs. 4.85M',
-                    delta: '+14.2% vs target',
+                    value: LkFormatters.formatLkr(kpis.todayRevenue),
+                    delta: '${kpis.todayOrders} orders today',
                     deltaPositive: true,
                     icon: Icons.trending_up,
                     badgeText: 'LKR Gross',
                   ),
                   const SizedBox(width: 12),
                   _KpiCard(
-                    title: 'CASH INFLOW / OUTFLOW',
-                    value: 'Rs. 7.2M / Rs. 2.4M',
-                    delta: 'Net: +Rs. 4.8M',
-                    deltaPositive: true,
+                    title: 'UNPAID INVOICES',
+                    value: '${kpis.unpaidInvoices}',
+                    delta: 'Open AR documents',
+                    deltaPositive: kpis.unpaidInvoices == 0,
                     icon: Icons.account_balance,
-                    badgeText: 'Treasury',
+                    badgeText: 'AR',
                   ),
                   const SizedBox(width: 12),
                   _KpiCard(
                     title: 'PENDING SHIPMENTS',
-                    value: '38 Orders',
-                    delta: '12 Require Validation',
+                    value: '${kpis.pendingShipments} Orders',
+                    delta: kpis.vendorId.isNotEmpty ? 'Slot ${kpis.vendorId}' : 'Warehouse',
                     deltaPositive: false,
                     icon: Icons.local_shipping,
-                    badgeText: 'Kelaniya Hub',
+                    badgeText: 'Outbound',
                   ),
                 ],
               ),
@@ -105,26 +119,26 @@ class ExecutiveHubScreen extends ConsumerWidget {
                   icon: Icons.qr_code_scanner,
                   title: 'Scan Barcode',
                   subtitle: 'Stock Inquiry & Aisle',
-                  onTap: onNavigateToBarcode,
+                  onTap: widget.onNavigateToBarcode,
                 ),
                 _ActionTile(
                   icon: Icons.add_shopping_cart,
                   title: 'Create Order',
                   subtitle: 'Quotations & VAT/SSCL',
-                  onTap: onNavigateToCreateOrder,
+                  onTap: widget.onNavigateToCreateOrder,
                 ),
                 _ActionTile(
                   icon: Icons.warehouse,
                   title: 'Stock Levels',
                   subtitle: 'Multi-Branch Inventory',
-                  onTap: onNavigateToStock,
+                  onTap: widget.onNavigateToStock,
                 ),
                 _ActionTile(
                   icon: Icons.approval,
                   title: 'Approvals (${pendingApprovals.length})',
                   subtitle: 'Credit & PO Authorizations',
                   badgeCount: pendingApprovals.length,
-                  onTap: onNavigateToApprovals,
+                  onTap: widget.onNavigateToApprovals,
                 ),
               ],
             ),

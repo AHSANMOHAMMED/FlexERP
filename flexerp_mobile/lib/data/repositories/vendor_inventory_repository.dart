@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/vendor_model.dart';
+import 'auth_repository.dart';
 import 'vendor_repository.dart';
 
 final vendorStockEventStreamProvider = StreamProvider<VendorStockUpdateEvent>((ref) {
@@ -209,7 +210,43 @@ class VendorInventoryNotifier extends Notifier<List<VendorProduct>> {
 
     final products = _isolatedVendorDbs[vendorId] ?? [];
     _rebuildBarcodeIndex(products);
+    Future.microtask(syncFromServer);
     return products;
+  }
+
+  Future<void> syncFromServer() async {
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    final vendor = ref.read(currentVendorProvider);
+    if (user == null || user.isDemo || api == null) return;
+    try {
+      final rows = await api.posProducts();
+      final products = rows.map(VendorProduct.fromApi).toList();
+      _isolatedVendorDbs[vendor.vendorId] = products;
+      _rebuildBarcodeIndex(products);
+      state = products;
+    } catch (_) {
+      // Keep local cache on failure
+    }
+  }
+
+  Future<VendorProduct?> lookupBarcodeLive(String barcode) async {
+    final local = findByBarcode(barcode);
+    if (local != null) return local;
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user == null || user.isDemo || api == null) return null;
+    final row = await api.stockBarcode(barcode);
+    if (row == null) return null;
+    final product = VendorProduct.fromApi(row);
+    final vendorId = ref.read(currentVendorProvider).vendorId;
+    final current = _isolatedVendorDbs[vendorId] ?? [];
+    if (!current.any((p) => p.id == product.id)) {
+      _isolatedVendorDbs[vendorId] = [...current, product];
+      state = _isolatedVendorDbs[vendorId]!;
+      _rebuildBarcodeIndex(state);
+    }
+    return product;
   }
 
   void _rebuildBarcodeIndex(List<VendorProduct> products) {

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+    <record id="flexerp_ops_provider_type" model="ir.config_parameter">
+        <field name="key">flexerp.ops.provider_type</field>
+        <field name="value">docker</field>
+    </record>
+    <record id="flexerp_ops_endpoint" model="ir.config_parameter">
+        <field name="key">flexerp.ops.endpoint</field>
+        <field name="value"></field>
+    </record>
+    <record id="flexerp_ops_token" model="ir.config_parameter">
+        <field name="key">flexerp.ops.token</field>
+        <field name="value"></field>
+    </record>
+    <record id="flexerp_ops_workers" model="ir.config_parameter">
+        <field name="key">flexerp.ops.workers</field>
+        <field name="value">4</field>
+    </record>
+    <record id="flexerp_ops_db_maxconn" model="ir.config_parameter">
+        <field name="key">flexerp.ops.db_maxconn</field>
+        <field name="value">64</field>
+    </record>
+</odoo>

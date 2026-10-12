@@ -48,10 +48,15 @@ class _PaymentRegisterSheetState extends ConsumerState<PaymentRegisterSheet> {
     _memoController.text = 'Payment for ${widget.invoice.number}';
   }
 
-  void _confirmPayment() {
+  Future<void> _confirmPayment() async {
     final amount = double.tryParse(_amountController.text) ?? widget.invoice.amountResidual;
-    ref.read(invoicesProvider.notifier).registerPayment(widget.invoice.id, amount);
+    await ref.read(invoicesProvider.notifier).registerPayment(
+          widget.invoice.id,
+          amount,
+          memo: _memoController.text.trim(),
+        );
 
+    if (!mounted) return;
     Navigator.pop(context);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

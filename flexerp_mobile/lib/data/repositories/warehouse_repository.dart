@@ -1,56 +1,56 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/stock_picking.dart';
 import '../mock/mock_sri_lanka_data.dart';
+import '../../core/api/odoo_client.dart';
 import 'auth_repository.dart';
 
 class StockPickingsNotifier extends Notifier<List<StockPicking>> {
   @override
   List<StockPicking> build() {
+    final user = ref.watch(currentUserProvider);
+    if (user != null && !user.isDemo) return const [];
     return List.from(MockSriLankaDataService.stockPickings);
   }
 
   Future<void> syncFromOdoo() async {
-    final client = ref.read(authRepositoryProvider).activeClient;
-    if (client == null) return;
-    try {
-      final records = await client.searchRead(
-        model: 'stock.picking',
-        domain: [],
-        fields: ['id', 'name', 'partner_id', 'origin', 'picking_type_id', 'state', 'scheduled_date'],
-        limit: 50,
-      );
-      if (records.isNotEmpty) {
-        state = records.map((rec) {
-          final partner = rec['partner_id'];
-          final partnerName = partner is List && partner.length > 1 ? partner[1].toString() : 'Warehouse Partner';
-          final pickType = rec['picking_type_id'];
-          final pickTypeName = pickType is List && pickType.length > 1 ? pickType[1].toString() : 'Delivery Orders';
-          return StockPicking(
-            id: rec['id'] as int,
-            name: rec['name'] as String? ?? 'WH/OUT/000',
-            partnerName: partnerName,
-            origin: rec['origin']?.toString() ?? 'Manual',
-            pickingType: pickTypeName,
-            state: rec['state']?.toString() ?? 'assigned',
-            scheduledDate: rec['scheduled_date'] != null
-                ? DateTime.tryParse(rec['scheduled_date'].toString()) ?? DateTime.now()
-                : DateTime.now(),
-            lines: [
-              PickingMoveLine(
-                id: 1,
-                productName: 'Sample Logistic SKU Item',
-                barcode: '4792001928312',
-                sourceLocation: 'WH/Kelaniya/Stock',
-                expectedQty: 10,
-                scannedQty: 10,
-              ),
-            ],
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user == null || user.isDemo) return;
+    if (api == null) throw OdooException('Not authenticated');
+
+    final records = await api.stockPickings();
+    final pickings = <StockPicking>[];
+    for (final rec in records) {
+      List<PickingMoveLine> lines = const [];
+      try {
+        final detail = await api.stockPicking(rec['id'] as int);
+        final rawLines = detail['lines'] as List? ?? [];
+        lines = rawLines.map((line) {
+          final map = Map<String, dynamic>.from(line as Map);
+          return PickingMoveLine(
+            id: map['move_id'] as int? ?? 0,
+            productName: map['product_name']?.toString() ?? 'Product',
+            barcode: map['barcode']?.toString() ?? '',
+            sourceLocation: map['location_src']?.toString() ?? '',
+            expectedQty: (map['product_uom_qty'] as num?)?.toDouble() ?? 0.0,
+            scannedQty: (map['quantity'] as num?)?.toDouble() ?? 0.0,
           );
         }).toList();
-      }
-    } catch (_) {
-      // Gracefully maintain offline state
+      } catch (_) {}
+      pickings.add(StockPicking(
+        id: rec['id'] as int? ?? 0,
+        name: rec['name']?.toString() ?? 'WH/OUT/000',
+        partnerName: rec['partner']?.toString() ?? 'Warehouse Partner',
+        origin: rec['origin']?.toString() ?? 'Manual',
+        pickingType: rec['picking_type']?.toString() ?? 'Delivery Orders',
+        state: rec['state']?.toString() ?? 'assigned',
+        scheduledDate: rec['scheduled_date'] != null
+            ? DateTime.tryParse(rec['scheduled_date'].toString()) ?? DateTime.now()
+            : DateTime.now(),
+        lines: lines,
+      ));
     }
+    state = pickings;
   }
 
   void incrementScannedQty(int pickingId, int lineId) {
@@ -74,7 +74,8 @@ class StockPickingsNotifier extends Notifier<List<StockPicking>> {
                     barcode: line.barcode,
                     sourceLocation: line.sourceLocation,
                     expectedQty: line.expectedQty,
-                    scannedQty: line.scannedQty < line.expectedQty ? line.scannedQty + 1 : line.scannedQty,
+                    scannedQty:
+                        line.scannedQty < line.expectedQty ? line.scannedQty + 1 : line.scannedQty,
                   )
                 else
                   line,
@@ -85,7 +86,31 @@ class StockPickingsNotifier extends Notifier<List<StockPicking>> {
     ];
   }
 
-  void validatePicking(int pickingId) {
+  Future<void> validatePicking(int pickingId) async {
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user != null && !user.isDemo && api != null) {
+      final result = await api.validatePicking(pickingId);
+      final newState = result['state']?.toString() ?? 'done';
+      state = [
+        for (final p in state)
+          if (p.id == pickingId)
+            StockPicking(
+              id: p.id,
+              name: p.name,
+              partnerName: p.partnerName,
+              origin: p.origin,
+              pickingType: p.pickingType,
+              state: newState,
+              scheduledDate: p.scheduledDate,
+              lines: p.lines,
+            )
+          else
+            p
+      ];
+      return;
+    }
+
     state = [
       for (final p in state)
         if (p.id == pickingId)
@@ -102,11 +127,8 @@ class StockPickingsNotifier extends Notifier<List<StockPicking>> {
         else
           p
     ];
-    final client = ref.read(authRepositoryProvider).activeClient;
-    if (client != null) {
-      client.callButton(model: 'stock.picking', method: 'button_validate', ids: [pickingId]).catchError((_) => null);
-    }
   }
 }
 
-final stockPickingsProvider = NotifierProvider<StockPickingsNotifier, List<StockPicking>>(StockPickingsNotifier.new);
+final stockPickingsProvider =
+    NotifierProvider<StockPickingsNotifier, List<StockPicking>>(StockPickingsNotifier.new);

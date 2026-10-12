@@ -5,64 +5,74 @@ import '../mock/mock_sri_lanka_data.dart';
 import 'auth_repository.dart';
 
 class CrmLeadsNotifier extends Notifier<List<CrmLead>> {
+  final Map<String, int> _stageIds = {};
+
   @override
   List<CrmLead> build() {
+    final user = ref.watch(currentUserProvider);
+    if (user != null && !user.isDemo) return const [];
     return List.from(MockSriLankaDataService.crmLeads);
   }
 
   Future<void> syncFromOdoo() async {
-    final client = ref.read(authRepositoryProvider).activeClient;
-    if (client == null) return;
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user == null || user.isDemo || api == null) return;
     try {
-      final records = await client.searchRead(
-        model: 'crm.lead',
-        domain: [],
-        fields: ['id', 'name', 'partner_id', 'expected_revenue', 'stage_id', 'priority', 'phone', 'email_from'],
-        limit: 50,
-      );
-      if (records.isNotEmpty) {
-        state = records.map((rec) {
-          final partner = rec['partner_id'];
-          final partnerName = partner is List && partner.length > 1 ? partner[1].toString() : 'Walk-in Prospect';
-          final stage = rec['stage_id'];
-          final stageName = stage is List && stage.length > 1 ? stage[1].toString() : 'New';
-          return CrmLead(
-            id: rec['id'] as int,
-            name: rec['name'] as String? ?? 'Opportunity',
-            partnerName: partnerName,
-            expectedRevenue: (rec['expected_revenue'] as num?)?.toDouble() ?? 0.0,
-            stage: stageName,
-            priority: int.tryParse(rec['priority']?.toString() ?? '1') ?? 1,
-            tags: const ['Direct Sales'],
-            phone: rec['phone']?.toString() ?? '+94 77 123 4567',
-            expectedClosing: '30 Days',
-          );
-        }).toList();
-      }
-    } catch (_) {
-      // Gracefully maintain offline state
-    }
+      final records = await api.crmLeads();
+      _stageIds.clear();
+      state = records.map((rec) {
+        final stage = rec['stage']?.toString() ?? 'New';
+        final stageId = rec['stage_id'];
+        if (stageId is int && stageId > 0) {
+          _stageIds[stage] = stageId;
+        }
+        return CrmLead(
+          id: rec['id'] as int? ?? 0,
+          name: rec['name']?.toString() ?? 'Opportunity',
+          partnerName: rec['partner_name']?.toString() ?? 'Walk-in Prospect',
+          expectedRevenue: (rec['expected_revenue'] as num?)?.toDouble() ?? 0.0,
+          stage: stage,
+          priority: int.tryParse(rec['priority']?.toString() ?? '1') ?? 1,
+          tags: const ['Direct Sales'],
+          phone: rec['phone']?.toString() ?? '',
+          expectedClosing: '30 Days',
+        );
+      }).toList();
+    } catch (_) {}
   }
 
-  void updateLeadStage(int id, String newStage) {
+  Future<void> updateLeadStage(int id, String newStage) async {
     state = [
       for (final lead in state)
         if (lead.id == id) lead.copyWith(stage: newStage) else lead
     ];
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    final stageId = _stageIds[newStage];
+    if (user == null || user.isDemo || api == null || stageId == null) return;
+    try {
+      await api.crmSetStage(leadId: id, stageId: stageId);
+    } catch (_) {}
   }
 
-  void addLead(CrmLead lead) {
+  Future<void> addLead(CrmLead lead) async {
     state = [lead, ...state];
-    final client = ref.read(authRepositoryProvider).activeClient;
-    if (client != null) {
-      client.create(
-        model: 'crm.lead',
-        values: {
-          'name': lead.name,
-          'expected_revenue': lead.expectedRevenue,
-        },
-      ).catchError((_) => 0);
-    }
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user == null || user.isDemo || api == null) return;
+    try {
+      final created = await api.crmCreateLead(
+        name: lead.name,
+        expectedRevenue: lead.expectedRevenue,
+        phone: lead.phone,
+      );
+      final newId = created['id'] as int? ?? lead.id;
+      state = [
+        for (final l in state)
+          if (l.name == lead.name && l.id == lead.id) l.copyWith(id: newId) else l
+      ];
+    } catch (_) {}
   }
 }
 
@@ -71,46 +81,38 @@ final crmLeadsProvider = NotifierProvider<CrmLeadsNotifier, List<CrmLead>>(CrmLe
 class SaleOrdersNotifier extends Notifier<List<SaleOrder>> {
   @override
   List<SaleOrder> build() {
+    final user = ref.watch(currentUserProvider);
+    if (user != null && !user.isDemo) return const [];
     return List.from(MockSriLankaDataService.saleOrders);
   }
 
   Future<void> syncFromOdoo() async {
-    final client = ref.read(authRepositoryProvider).activeClient;
-    if (client == null) return;
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user == null || user.isDemo || api == null) return;
     try {
-      final records = await client.searchRead(
-        model: 'sale.order',
-        domain: [],
-        fields: ['id', 'name', 'partner_id', 'amount_total', 'state', 'date_order'],
-        limit: 50,
-      );
-      if (records.isNotEmpty) {
-        state = records.map((rec) {
-          final partner = rec['partner_id'];
-          final partnerName = partner is List && partner.length > 1 ? partner[1].toString() : 'Customer';
-          return SaleOrder(
-            id: rec['id'] as int,
-            name: rec['name'] as String? ?? 'SO-000',
-            partnerName: partnerName,
-            partnerPhone: '+94 11 200 0000',
-            paymentTerms: '30 Days Net',
-            creditLimit: 2000000.0,
-            currentCreditUsed: 500000.0,
-            lines: [],
-            globalDiscountPercent: 0,
-            state: rec['state']?.toString() ?? 'draft',
-            dateOrder: rec['date_order'] != null
-                ? DateTime.tryParse(rec['date_order'].toString()) ?? DateTime.now()
-                : DateTime.now(),
-          );
-        }).toList();
-      }
-    } catch (_) {
-      // Gracefully maintain offline state
-    }
+      final records = await api.salesOrders();
+      state = records.map((rec) {
+        return SaleOrder(
+          id: rec['id'] as int? ?? 0,
+          name: rec['name']?.toString() ?? 'SO-000',
+          partnerName: rec['partner_name']?.toString() ?? 'Customer',
+          partnerPhone: '+94 11 200 0000',
+          paymentTerms: '30 Days Net',
+          creditLimit: 2000000.0,
+          currentCreditUsed: 500000.0,
+          lines: const [],
+          globalDiscountPercent: 0,
+          state: rec['state']?.toString() ?? 'draft',
+          dateOrder: rec['date_order'] != null
+              ? DateTime.tryParse(rec['date_order'].toString()) ?? DateTime.now()
+              : DateTime.now(),
+        );
+      }).toList();
+    } catch (_) {}
   }
 
-  void confirmOrder(int id) {
+  Future<void> confirmOrder(int id) async {
     state = [
       for (final order in state)
         if (order.id == id)
@@ -130,23 +132,68 @@ class SaleOrdersNotifier extends Notifier<List<SaleOrder>> {
         else
           order
     ];
-    final client = ref.read(authRepositoryProvider).activeClient;
-    if (client != null) {
-      client.callButton(model: 'sale.order', method: 'action_confirm', ids: [id]).catchError((_) => null);
-    }
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user == null || user.isDemo || api == null) return;
+    try {
+      await api.salesConfirmOrder(id);
+    } catch (_) {}
   }
 
-  void addOrder(SaleOrder order) {
+  Future<void> addOrder(SaleOrder order) async {
     state = [order, ...state];
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
     final client = ref.read(authRepositoryProvider).activeClient;
-    if (client != null) {
-      client.create(
-        model: 'sale.order',
-        values: {
-          'name': order.name,
-        },
-      ).catchError((_) => 0);
-    }
+    if (user == null || user.isDemo || api == null || client == null) return;
+
+    final partners = await client.searchRead(
+      model: 'res.partner',
+      domain: [
+        ['name', 'ilike', order.partnerName]
+      ],
+      fields: ['id'],
+      limit: 1,
+    );
+    if (partners.isEmpty) return;
+    final partnerId = partners.first['id'] as int;
+    final lines = order.lines
+        .map((line) => {
+              'product_id': line.productId,
+              'qty': line.quantity,
+              'price_unit': line.unitPrice,
+              'name': line.productName,
+            })
+        .toList();
+    try {
+      final created = await api.salesCreateOrder(
+        partnerId: partnerId,
+        lines: lines,
+        confirm: order.state == 'sale',
+      );
+      final id = created['id'] as int? ?? 0;
+      if (id > 0) {
+        state = [
+          for (final o in state)
+            if (o.name == order.name)
+              SaleOrder(
+                id: id,
+                name: created['name']?.toString() ?? order.name,
+                partnerName: order.partnerName,
+                partnerPhone: order.partnerPhone,
+                paymentTerms: order.paymentTerms,
+                creditLimit: order.creditLimit,
+                currentCreditUsed: order.currentCreditUsed,
+                lines: order.lines,
+                globalDiscountPercent: order.globalDiscountPercent,
+                state: created['state']?.toString() ?? order.state,
+                dateOrder: order.dateOrder,
+              )
+            else
+              o
+        ];
+      }
+    } catch (_) {}
   }
 }
 

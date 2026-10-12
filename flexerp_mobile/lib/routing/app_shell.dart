@@ -29,6 +29,11 @@ import '../features/hr/attendance_kiosk_screen.dart';
 import '../features/hr/time_off_screen.dart';
 import '../features/hr/employee_directory_screen.dart';
 import '../features/profile/profile_screen.dart';
+import '../features/website/shop_catalog_screen.dart';
+import '../features/vendor_admin/vendor_admin_hub_screen.dart';
+import '../features/vendor_admin/vendor_staff_screen.dart';
+import '../core/offline/offline_queue.dart';
+import '../core/live/live_sync.dart';
 
 class _ShellTab {
   final FlexNavItem navItem;
@@ -48,6 +53,21 @@ class AppShell extends ConsumerStatefulWidget {
 
 class _AppShellState extends ConsumerState<AppShell> {
   int _currentTabIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() {
+      ref.read(offlineQueueProvider.notifier).flush();
+      ref.read(liveSyncProvider.notifier).start();
+    });
+  }
+
+  @override
+  void dispose() {
+    // Riverpod dispose handles LiveSyncNotifier timer via ref.onDispose.
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -116,14 +136,24 @@ class _AppShellState extends ConsumerState<AppShell> {
             ),
             screen: VendorManagementScreen(),
           ),
-          const _ShellTab(
-            navItem: FlexNavItem(
-              icon: Icons.inventory_2_outlined,
-              activeIcon: Icons.inventory_2,
-              label: 'Live Stock',
+          if (features.enableInventory)
+            const _ShellTab(
+              navItem: FlexNavItem(
+                icon: Icons.inventory_2_outlined,
+                activeIcon: Icons.inventory_2,
+                label: 'Live Stock',
+              ),
+              screen: VendorInventoryManagementScreen(),
             ),
-            screen: VendorInventoryManagementScreen(),
-          ),
+          if (features.enableWebsite)
+            const _ShellTab(
+              navItem: FlexNavItem(
+                icon: Icons.storefront_outlined,
+                activeIcon: Icons.storefront,
+                label: 'Shop',
+              ),
+              screen: ShopCatalogScreen(),
+            ),
           _ShellTab(
             navItem: const FlexNavItem(
               icon: Icons.person_outline,
@@ -134,38 +164,132 @@ class _AppShellState extends ConsumerState<AppShell> {
           ),
         ];
 
+      case UserRole.vendorAdmin:
+        // Tab indices: 0 hub, 1 staff, then optional stock / POS / sales / invoices, profile last.
+        var nextIndex = 2;
+        final stockIndex = features.enableInventory ? nextIndex++ : -1;
+        final posIndex = features.enablePos ? nextIndex++ : -1;
+        final tabs = <_ShellTab>[
+          _ShellTab(
+            navItem: const FlexNavItem(
+              icon: Icons.store_outlined,
+              activeIcon: Icons.store,
+              label: 'My Vendor',
+            ),
+            screen: VendorAdminHubScreen(
+              onOpenStaff: () => setState(() => _currentTabIndex = 1),
+              onOpenStock: stockIndex >= 0
+                  ? () => setState(() => _currentTabIndex = stockIndex)
+                  : null,
+              onOpenPos:
+                  posIndex >= 0 ? () => setState(() => _currentTabIndex = posIndex) : null,
+            ),
+          ),
+          const _ShellTab(
+            navItem: FlexNavItem(
+              icon: Icons.groups_outlined,
+              activeIcon: Icons.groups,
+              label: 'Staff',
+            ),
+            screen: VendorStaffScreen(),
+          ),
+        ];
+        if (features.enableInventory) {
+          tabs.add(
+            const _ShellTab(
+              navItem: FlexNavItem(
+                icon: Icons.inventory_2_outlined,
+                activeIcon: Icons.inventory_2,
+                label: 'Stock',
+              ),
+              screen: VendorInventoryManagementScreen(),
+            ),
+          );
+        }
+        if (features.enablePos) {
+          tabs.add(
+            const _ShellTab(
+              navItem: FlexNavItem(
+                icon: Icons.point_of_sale,
+                activeIcon: Icons.point_of_sale,
+                label: 'POS',
+              ),
+              screen: PosOrdersScreen(),
+            ),
+          );
+        }
+        if (features.enableSales) {
+          tabs.add(
+            _ShellTab(
+              navItem: const FlexNavItem(
+                icon: Icons.request_quote_outlined,
+                activeIcon: Icons.request_quote,
+                label: 'Sales',
+              ),
+              screen: QuotationBuilderScreen(
+                onOrderConfirmed: () {},
+              ),
+            ),
+          );
+        }
+        if (features.enableInvoicing) {
+          tabs.add(
+            const _ShellTab(
+              navItem: FlexNavItem(
+                icon: Icons.receipt_long_outlined,
+                activeIcon: Icons.receipt_long,
+                label: 'Invoices',
+              ),
+              screen: InvoicesHubScreen(),
+            ),
+          );
+        }
+        tabs.add(
+          _ShellTab(
+            navItem: const FlexNavItem(
+              icon: Icons.person_outline,
+              activeIcon: Icons.person,
+              label: 'Profile',
+            ),
+            screen: ProfileScreen(onLogout: widget.onLogout),
+          ),
+        );
+        return tabs;
+
       case UserRole.posCashier:
         final tabs = <_ShellTab>[];
-        tabs.add(
-          const _ShellTab(
-            navItem: FlexNavItem(
-              icon: Icons.point_of_sale,
-              activeIcon: Icons.point_of_sale,
-              label: 'Register',
+        if (features.enablePos) {
+          tabs.add(
+            const _ShellTab(
+              navItem: FlexNavItem(
+                icon: Icons.point_of_sale,
+                activeIcon: Icons.point_of_sale,
+                label: 'Register',
+              ),
+              screen: PosRegisterScreen(),
             ),
-            screen: PosRegisterScreen(),
-          ),
-        );
-        tabs.add(
-          const _ShellTab(
-            navItem: FlexNavItem(
-              icon: Icons.receipt_outlined,
-              activeIcon: Icons.receipt,
-              label: 'Orders',
+          );
+          tabs.add(
+            const _ShellTab(
+              navItem: FlexNavItem(
+                icon: Icons.receipt_outlined,
+                activeIcon: Icons.receipt,
+                label: 'Orders',
+              ),
+              screen: PosOrdersScreen(),
             ),
-            screen: PosOrdersScreen(),
-          ),
-        );
-        tabs.add(
-          const _ShellTab(
-            navItem: FlexNavItem(
-              icon: Icons.lock_clock_outlined,
-              activeIcon: Icons.lock_clock,
-              label: 'Shift Close',
+          );
+          tabs.add(
+            const _ShellTab(
+              navItem: FlexNavItem(
+                icon: Icons.lock_clock_outlined,
+                activeIcon: Icons.lock_clock,
+                label: 'Shift Close',
+              ),
+              screen: PosCloseoutScreen(),
             ),
-            screen: PosCloseoutScreen(),
-          ),
-        );
+          );
+        }
         if (features.enableInventory) {
           tabs.add(
             const _ShellTab(
@@ -191,7 +315,7 @@ class _AppShellState extends ConsumerState<AppShell> {
         return tabs;
 
       case UserRole.warehouseOp:
-        return [
+        final tabs = <_ShellTab>[
           const _ShellTab(
             navItem: FlexNavItem(
               icon: Icons.hub_outlined,
@@ -200,30 +324,42 @@ class _AppShellState extends ConsumerState<AppShell> {
             ),
             screen: OperationsHubScreen(),
           ),
-          const _ShellTab(
-            navItem: FlexNavItem(
-              icon: Icons.qr_code_scanner,
-              activeIcon: Icons.qr_code_scanner,
-              label: 'Barcode',
+        ];
+        if (features.enableInventory) {
+          tabs.add(
+            const _ShellTab(
+              navItem: FlexNavItem(
+                icon: Icons.qr_code_scanner,
+                activeIcon: Icons.qr_code_scanner,
+                label: 'Barcode',
+              ),
+              screen: BarcodeScannerScreen(),
             ),
-            screen: BarcodeScannerScreen(),
-          ),
-          const _ShellTab(
-            navItem: FlexNavItem(
-              icon: Icons.local_shipping_outlined,
-              activeIcon: Icons.local_shipping,
-              label: 'Pickings',
+          );
+          tabs.add(
+            const _ShellTab(
+              navItem: FlexNavItem(
+                icon: Icons.inventory_outlined,
+                activeIcon: Icons.inventory,
+                label: 'Live Stock',
+              ),
+              screen: VendorInventoryManagementScreen(),
             ),
-            screen: StockPickingScreen(),
-          ),
-          const _ShellTab(
-            navItem: FlexNavItem(
-              icon: Icons.inventory_outlined,
-              activeIcon: Icons.inventory,
-              label: 'Live Stock',
+          );
+        }
+        if (features.enableWarehouse) {
+          tabs.add(
+            const _ShellTab(
+              navItem: FlexNavItem(
+                icon: Icons.local_shipping_outlined,
+                activeIcon: Icons.local_shipping,
+                label: 'Pickings',
+              ),
+              screen: StockPickingScreen(),
             ),
-            screen: VendorInventoryManagementScreen(),
-          ),
+          );
+        }
+        tabs.add(
           _ShellTab(
             navItem: const FlexNavItem(
               icon: Icons.person_outline,
@@ -232,23 +368,26 @@ class _AppShellState extends ConsumerState<AppShell> {
             ),
             screen: ProfileScreen(onLogout: widget.onLogout),
           ),
-        ];
+        );
+        return tabs;
 
       case UserRole.salesRep:
         final tabs = <_ShellTab>[];
-        tabs.add(
-          _ShellTab(
-            navItem: const FlexNavItem(
-              icon: Icons.dashboard_outlined,
-              activeIcon: Icons.dashboard,
-              label: 'Dashboard',
+        if (features.enableExecutive) {
+          tabs.add(
+            _ShellTab(
+              navItem: const FlexNavItem(
+                icon: Icons.dashboard_outlined,
+                activeIcon: Icons.dashboard,
+                label: 'Dashboard',
+              ),
+              screen: ExecutiveHubScreen(
+                onNavigateToCreateOrder: () => _openNewQuotation(context),
+              ),
             ),
-            screen: ExecutiveHubScreen(
-              onNavigateToCreateOrder: () => _openNewQuotation(context),
-            ),
-          ),
-        );
-        if (features.enableSales) {
+          );
+        }
+        if (features.enableCrm) {
           tabs.add(
             _ShellTab(
               navItem: const FlexNavItem(
@@ -261,6 +400,8 @@ class _AppShellState extends ConsumerState<AppShell> {
               ),
             ),
           );
+        }
+        if (features.enableSales) {
           tabs.add(
             _ShellTab(
               navItem: const FlexNavItem(
@@ -296,18 +437,20 @@ class _AppShellState extends ConsumerState<AppShell> {
 
       case UserRole.accountant:
         final tabs = <_ShellTab>[];
-        tabs.add(
-          _ShellTab(
-            navItem: const FlexNavItem(
-              icon: Icons.dashboard_outlined,
-              activeIcon: Icons.dashboard,
-              label: 'Dashboard',
+        if (features.enableExecutive) {
+          tabs.add(
+            _ShellTab(
+              navItem: const FlexNavItem(
+                icon: Icons.dashboard_outlined,
+                activeIcon: Icons.dashboard,
+                label: 'Dashboard',
+              ),
+              screen: ExecutiveHubScreen(
+                onNavigateToApprovals: () => _openNewQuotation(context),
+              ),
             ),
-            screen: ExecutiveHubScreen(
-              onNavigateToApprovals: () => _openNewQuotation(context),
-            ),
-          ),
-        );
+          );
+        }
         if (features.enableInvoicing) {
           tabs.add(
             const _ShellTab(
@@ -319,12 +462,14 @@ class _AppShellState extends ConsumerState<AppShell> {
               screen: InvoicesHubScreen(),
             ),
           );
+        }
+        if (features.enablePayments || features.enableInvoicing) {
           tabs.add(
             const _ShellTab(
               navItem: FlexNavItem(
                 icon: Icons.payments_outlined,
                 activeIcon: Icons.payments,
-                label: 'Payments',
+                label: 'Bills',
               ),
               screen: VendorBillsScreen(),
             ),

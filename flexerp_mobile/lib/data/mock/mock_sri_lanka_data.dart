@@ -10,6 +10,7 @@ import '../models/customer_partner.dart';
 import '../models/stock_quant.dart';
 import '../models/vendor_bill.dart';
 import '../models/hr_models.dart';
+import '../models/vendor_model.dart';
 
 /// Rich in-memory dataset tailored for Sri Lankan enterprise operations (l10n_lk).
 /// Includes Colombo HQ, Kelaniya Warehouse, Kandy & Galle operations.
@@ -27,6 +28,21 @@ class MockSriLankaDataService {
       companyName: 'FlexCorp Ceylon (Pvt) Ltd',
       groups: ['base.group_system', 'base.group_erp_manager'],
       isDemo: true,
+      features: VendorFeatures.mall,
+    ),
+    const AuthUser(
+      uid: 7,
+      name: 'Ruwan Perera (Vendor Admin — Galle Shop)',
+      email: 'vendor@flexcorp.lk',
+      role: UserRole.vendorAdmin,
+      serverUrl: 'https://erp.flexcorp.lk',
+      database: 'flexerp_production_lk',
+      companyId: 3,
+      companyName: 'FlexCorp Central Regional Branch',
+      groups: ['flexerp_vendor_rbac.group_vendor_admin'],
+      isDemo: true,
+      vendorId: 'VND-003',
+      features: VendorFeatures.smallShop,
     ),
     const AuthUser(
       uid: 2,
@@ -39,6 +55,7 @@ class MockSriLankaDataService {
       companyName: 'FlexCorp Ceylon (Pvt) Ltd',
       groups: ['sales_team.group_sale_salesman'],
       isDemo: true,
+      features: VendorFeatures.mall,
     ),
     const AuthUser(
       uid: 3,
@@ -51,6 +68,7 @@ class MockSriLankaDataService {
       companyName: 'FlexCorp Logistics & Fulfillment Hub',
       groups: ['stock.group_stock_user'],
       isDemo: true,
+      features: VendorFeatures.mall,
     ),
     const AuthUser(
       uid: 4,
@@ -63,6 +81,7 @@ class MockSriLankaDataService {
       companyName: 'FlexCorp Ceylon (Pvt) Ltd',
       groups: ['account.group_account_invoice', 'account.group_account_user'],
       isDemo: true,
+      features: VendorFeatures.mall,
     ),
     const AuthUser(
       uid: 5,
@@ -75,6 +94,7 @@ class MockSriLankaDataService {
       companyName: 'FlexCorp Central Regional Branch',
       groups: ['point_of_sale.group_pos_user'],
       isDemo: true,
+      features: VendorFeatures.smallShop,
     ),
     const AuthUser(
       uid: 6,
@@ -87,6 +107,18 @@ class MockSriLankaDataService {
       companyName: 'FlexCorp Ceylon (Pvt) Ltd',
       groups: ['base.group_user'],
       isDemo: true,
+      features: VendorFeatures(
+        enablePos: false,
+        enableInventory: false,
+        enableSales: false,
+        enableCrm: false,
+        enableInvoicing: false,
+        enablePayments: false,
+        enableWarehouse: false,
+        enableHr: true,
+        enableWebsite: false,
+        enableExecutive: false,
+      ),
     ),
   ];
 

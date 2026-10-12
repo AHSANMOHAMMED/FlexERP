@@ -6,65 +6,48 @@ import 'auth_repository.dart';
 class VendorBillsNotifier extends Notifier<List<VendorBill>> {
   @override
   List<VendorBill> build() {
-    return MockSriLankaDataService.mockVendorBills;
+    final user = ref.watch(currentUserProvider);
+    if (user != null && !user.isDemo) return const [];
+    return List.from(MockSriLankaDataService.mockVendorBills);
   }
 
   Future<void> syncFromOdoo() async {
-    final client = ref.read(odooClientProvider);
-    if (client == null || !client.isAuthenticated) return;
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user == null || user.isDemo || api == null) return;
 
     try {
-      final results = await client.searchRead(
-        model: 'account.move',
-        domain: [
-          ['move_type', '=', 'in_invoice']
-        ],
-        fields: [
-          'id',
-          'name',
-          'partner_id',
-          'invoice_date',
-          'invoice_date_due',
-          'amount_untaxed',
-          'amount_tax',
-          'amount_total',
-          'amount_residual',
-          'state',
-          'payment_reference',
-        ],
-        limit: 50,
-      );
-
-      if (results.isNotEmpty) {
-        final bills = results.map((item) {
-          final partner = item['partner_id'] is List ? item['partner_id'] as List : [0, 'Supplier'];
-          final dateStr = item['invoice_date']?.toString();
-          final dueStr = item['invoice_date_due']?.toString();
-
-          return VendorBill(
-            id: (item['id'] as num?)?.toInt() ?? 0,
-            billNumber: item['name']?.toString() ?? 'BILL/NEW',
-            vendorName: partner.length > 1 ? partner[1].toString() : 'Supplier',
-            vendorVatOrTin: 'V-SUPPLIER-TIN',
-            billDate: dateStr != null ? DateTime.tryParse(dateStr) ?? DateTime.now() : DateTime.now(),
-            dueDate: dueStr != null ? DateTime.tryParse(dueStr) ?? DateTime.now() : DateTime.now(),
-            subtotal: (item['amount_untaxed'] as num?)?.toDouble() ?? 0.0,
-            vatAmount: (item['amount_tax'] as num?)?.toDouble() ?? 0.0,
-            totalAmount: (item['amount_total'] as num?)?.toDouble() ?? 0.0,
-            amountDue: (item['amount_residual'] as num?)?.toDouble() ?? 0.0,
-            state: item['state']?.toString() ?? 'posted',
-            paymentReference: item['payment_reference']?.toString() ?? '',
-          );
-        }).toList();
-
-        state = bills;
-      }
-    } catch (_) {
-      // Fallback
-    }
+      final results = await api.accountingInvoices(moveType: 'in_invoice');
+      state = results.map((item) {
+        final dateStr = item['invoice_date']?.toString();
+        final dueStr = item['invoice_date_due']?.toString();
+        return VendorBill(
+          id: (item['id'] as num?)?.toInt() ?? 0,
+          billNumber: item['name']?.toString() ?? 'BILL/NEW',
+          vendorName: item['partner_name']?.toString() ?? 'Supplier',
+          vendorVatOrTin: 'V-SUPPLIER-TIN',
+          billDate: dateStr != null ? DateTime.tryParse(dateStr) ?? DateTime.now() : DateTime.now(),
+          dueDate: dueStr != null ? DateTime.tryParse(dueStr) ?? DateTime.now() : DateTime.now(),
+          subtotal: (item['amount_total'] as num?)?.toDouble() ?? 0.0,
+          vatAmount: 0.0,
+          totalAmount: (item['amount_total'] as num?)?.toDouble() ?? 0.0,
+          amountDue: (item['amount_residual'] as num?)?.toDouble() ?? 0.0,
+          state: item['state']?.toString() ?? 'posted',
+          paymentReference: '',
+        );
+      }).toList();
+    } catch (_) {}
   }
 
-  void markAsPaid(int billId) {
+  Future<void> markAsPaid(int billId) async {
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    final bill = state.firstWhere((b) => b.id == billId, orElse: () => state.first);
+    if (user != null && !user.isDemo && api != null) {
+      try {
+        await api.registerPayment(moveId: billId, amount: bill.amountDue);
+      } catch (_) {}
+    }
     state = [
       for (final b in state)
         if (b.id == billId)

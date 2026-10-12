@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+    <record id="flexerp_wa_provider" model="ir.config_parameter">
+        <field name="key">flexerp.whatsapp.provider</field>
+        <field name="value">meta</field>
+    </record>
+    <record id="flexerp_wa_endpoint" model="ir.config_parameter">
+        <field name="key">flexerp.whatsapp.endpoint</field>
+        <field name="value">https://graph.facebook.com/v19.0</field>
+    </record>
+    <record id="flexerp_wa_phone_id" model="ir.config_parameter">
+        <field name="key">flexerp.whatsapp.phone_number_id</field>
+        <field name="value"></field>
+    </record>
+    <record id="flexerp_wa_token" model="ir.config_parameter">
+        <field name="key">flexerp.whatsapp.token</field>
+        <field name="value"></field>
+    </record>
+</odoo>

@@ -7,12 +7,16 @@ import '../../core/widgets/flex_button.dart';
 import '../../core/widgets/flex_badge.dart';
 import '../../core/api/odoo_client.dart';
 import '../../data/repositories/auth_repository.dart';
-import '../../data/models/auth_user.dart';
 
 class ServerConnectionScreen extends ConsumerStatefulWidget {
   final VoidCallback onProceedToLogin;
+  final VoidCallback? onDemoReady;
 
-  const ServerConnectionScreen({super.key, required this.onProceedToLogin});
+  const ServerConnectionScreen({
+    super.key,
+    required this.onProceedToLogin,
+    this.onDemoReady,
+  });
 
   @override
   ConsumerState<ServerConnectionScreen> createState() => _ServerConnectionScreenState();
@@ -52,9 +56,14 @@ class _ServerConnectionScreenState extends ConsumerState<ServerConnectionScreen>
       _errorMessage = null;
     });
 
-    final client = OdooClient(baseUrl: rawUrl);
-
     try {
+      final normalized = OdooClient.normalizeUrl(rawUrl, enforceHttps: _enforceHttps);
+      OdooClient.assertUrlAllowed(
+        normalized,
+        enforceHttps: _enforceHttps,
+        isRelease: false,
+      );
+      final client = OdooClient(baseUrl: normalized);
       final pingResult = await client.ping();
       final dbList = await client.listDatabases();
 
@@ -64,6 +73,7 @@ class _ServerConnectionScreenState extends ConsumerState<ServerConnectionScreen>
           _pingSuccess = true;
           _latencyMs = pingResult['latencyMs'] as int?;
           _serverVersion = pingResult['serverVersion'] as String?;
+          _serverUrlController.text = normalized;
           if (dbList.isNotEmpty) {
             _databases = dbList;
             if (!_databases.contains(_selectedDatabase)) {
@@ -73,11 +83,12 @@ class _ServerConnectionScreenState extends ConsumerState<ServerConnectionScreen>
         });
 
         ref.read(serverConfigProvider.notifier).updateConfig(
-          serverUrl: rawUrl,
+          serverUrl: normalized,
           database: _selectedDatabase,
           isConnected: true,
           latencyMs: _latencyMs,
           serverVersion: _serverVersion,
+          enforceHttps: _enforceHttps,
         );
       }
     } catch (e) {
@@ -94,15 +105,31 @@ class _ServerConnectionScreenState extends ConsumerState<ServerConnectionScreen>
   }
 
   void _proceed() {
-    final rawUrl = _serverUrlController.text.trim();
-    ref.read(serverConfigProvider.notifier).updateConfig(
-      serverUrl: rawUrl.isNotEmpty ? rawUrl : 'http://localhost:8069',
-      database: _selectedDatabase,
-      isConnected: _pingSuccess,
-      latencyMs: _latencyMs,
-      serverVersion: _serverVersion,
-    );
-    widget.onProceedToLogin();
+    try {
+      final rawUrl = _serverUrlController.text.trim();
+      final normalized = OdooClient.normalizeUrl(
+        rawUrl.isNotEmpty ? rawUrl : 'http://localhost:8069',
+        enforceHttps: _enforceHttps,
+      );
+      OdooClient.assertUrlAllowed(
+        normalized,
+        enforceHttps: _enforceHttps,
+        isRelease: false,
+      );
+      ref.read(serverConfigProvider.notifier).updateConfig(
+        serverUrl: normalized,
+        database: _selectedDatabase,
+        isConnected: _pingSuccess,
+        latencyMs: _latencyMs,
+        serverVersion: _serverVersion,
+        enforceHttps: _enforceHttps,
+      );
+      widget.onProceedToLogin();
+    } catch (e) {
+      setState(() {
+        _errorMessage = e is OdooException ? e.message : e.toString();
+      });
+    }
   }
 
   @override
@@ -330,9 +357,18 @@ class _ServerConnectionScreenState extends ConsumerState<ServerConnectionScreen>
                     'Instant Sri Lanka Offline Sandbox',
                     style: FlexTypography.labelMd.copyWith(color: FlexColors.info),
                   ),
-                  onPressed: () {
-                    ref.read(currentUserProvider.notifier).switchRole(UserRole.superAdmin);
-                    _proceed();
+                  onPressed: () async {
+                    await ref.read(currentUserProvider.notifier).login(
+                      serverUrl: 'https://erp.flexcorp.lk',
+                      database: 'flexerp_production_lk',
+                      email: 'admin@flexcorp.lk',
+                      password: 'demo',
+                      isDemo: true,
+                    );
+                    widget.onDemoReady?.call();
+                    if (widget.onDemoReady == null) {
+                      widget.onProceedToLogin();
+                    }
                   },
                 ),
               ),

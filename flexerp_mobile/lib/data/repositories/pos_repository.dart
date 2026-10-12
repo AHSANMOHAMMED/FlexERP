@@ -1,8 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/pos_order.dart';
 import '../mock/mock_sri_lanka_data.dart';
+import '../../core/api/odoo_client.dart';
+import '../../core/offline/offline_queue.dart';
 import 'auth_repository.dart';
-
 import 'vendor_inventory_repository.dart';
 
 final posProductsProvider = Provider<List<PosProduct>>((ref) {
@@ -10,6 +11,8 @@ final posProductsProvider = Provider<List<PosProduct>>((ref) {
   if (vendorProducts.isNotEmpty) {
     return vendorProducts.map((vp) => vp.toPosProduct()).toList();
   }
+  final user = ref.watch(currentUserProvider);
+  if (user != null && !user.isDemo) return const [];
   return MockSriLankaDataService.posProducts;
 });
 
@@ -31,6 +34,62 @@ class PosCartNotifier extends Notifier<List<PosCartItem>> {
       map[item.product.id] = (map[item.product.id] ?? 0) + item.quantity;
     }
     return map;
+  }
+
+  Future<Map<String, dynamic>> completeCheckoutAndPush({
+    required String paymentMethod,
+    required double cashAmount,
+    required double cardAmount,
+    int? partnerId,
+    bool createInvoice = false,
+  }) async {
+    final user = ref.read(currentUserProvider);
+    final session = ref.read(posSessionProvider);
+    final lines = state
+        .map((item) => {
+              'product_id': item.product.id,
+              'qty': item.quantity.toDouble(),
+              'price_unit': item.product.price,
+            })
+        .toList();
+    final total = totalAmount;
+    final payload = {
+      'session_id': session.id,
+      'lines': lines,
+      'amount_total': total,
+      'payment_method': paymentMethod,
+      if (partnerId != null) 'partner_id': partnerId,
+      'create_invoice': createInvoice,
+    };
+
+    Map<String, dynamic> result = {'queued': false, 'local': true};
+
+    if (user != null && !user.isDemo) {
+      final api = ref.read(flexerpApiProvider);
+      try {
+        if (api == null) throw OdooException('Not authenticated');
+        result = await api.posPushOrder(payload);
+        result['queued'] = false;
+        result['local'] = false;
+      } catch (_) {
+        await ref.read(offlineQueueProvider.notifier).enqueue(
+              type: 'pos_order',
+              payload: payload,
+            );
+        result = {'queued': true, 'local': false, 'amount_total': total};
+      }
+    }
+
+    final soldMap = getSoldQuantities();
+    if (soldMap.isNotEmpty) {
+      ref.read(vendorInventoryProvider.notifier).deductSoldQuantities(soldMap);
+    }
+    ref.read(posSessionProvider.notifier).recordSale(
+          cashAmount: cashAmount,
+          cardAmount: cardAmount,
+        );
+    clear();
+    return result;
   }
 
   void completeCheckoutAndDeductStock() {
@@ -91,6 +150,27 @@ class PosSessionNotifier extends Notifier<PosShiftSession> {
   @override
   PosShiftSession build() => MockSriLankaDataService.activePosSession;
 
+  Future<void> openLiveSession() async {
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user == null || user.isDemo || api == null) return;
+    final configs = await api.posConfigs();
+    if (configs.isEmpty) throw OdooException('No POS config found for this company');
+    final configId = configs.first['id'] as int;
+    final opened = await api.posOpenSession(configId);
+    state = PosShiftSession(
+      id: opened['session_id'] as int,
+      name: opened['name']?.toString() ?? 'POS Session',
+      cashierName: user.name,
+      openingTime: DateTime.now(),
+      openingBalance: state.openingBalance,
+      cashSalesTotal: 0,
+      cardSalesTotal: 0,
+      transactionCount: 0,
+      state: opened['state']?.toString() ?? 'opened',
+    );
+  }
+
   void recordSale({required double cashAmount, required double cardAmount}) {
     state = PosShiftSession(
       id: state.id,
@@ -105,7 +185,26 @@ class PosSessionNotifier extends Notifier<PosShiftSession> {
     );
   }
 
-  void closeSession() {
+  Future<void> closeSession() async {
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user != null && !user.isDemo && api != null && state.id > 0) {
+      try {
+        final closed = await api.posCloseSession(state.id);
+        state = PosShiftSession(
+          id: state.id,
+          name: state.name,
+          cashierName: state.cashierName,
+          openingTime: state.openingTime,
+          openingBalance: state.openingBalance,
+          cashSalesTotal: state.cashSalesTotal,
+          cardSalesTotal: state.cardSalesTotal,
+          transactionCount: state.transactionCount,
+          state: closed['state']?.toString() ?? 'closed',
+        );
+        return;
+      } catch (_) {}
+    }
     state = PosShiftSession(
       id: state.id,
       name: state.name,
@@ -122,47 +221,47 @@ class PosSessionNotifier extends Notifier<PosShiftSession> {
 
 class PosOrdersHistoryNotifier extends Notifier<List<PosPastOrder>> {
   @override
-  List<PosPastOrder> build() => MockSriLankaDataService.mockPastPosOrders;
+  List<PosPastOrder> build() {
+    final user = ref.watch(currentUserProvider);
+    if (user != null && !user.isDemo) return const [];
+    return MockSriLankaDataService.mockPastPosOrders;
+  }
 
   Future<void> syncFromOdoo() async {
+    final user = ref.read(currentUserProvider);
     final client = ref.read(odooClientProvider);
-    if (client == null || !client.isAuthenticated) return;
-
-    try {
-      final results = await client.searchRead(
-        model: 'pos.order',
-        fields: [
-          'id',
-          'pos_reference',
-          'partner_id',
-          'amount_total',
-          'date_order',
-          'state',
-        ],
-        limit: 40,
-      );
-
-      if (results.isNotEmpty) {
-        final orders = results.map((item) {
-          final partner = item['partner_id'] is List ? item['partner_id'] as List : [0, 'Walk-in Customer'];
-          final dateStr = item['date_order']?.toString();
-
-          return PosPastOrder(
-            id: (item['id'] as num?)?.toInt() ?? 0,
-            receiptNumber: item['pos_reference']?.toString() ?? 'POS/RECEIPT',
-            orderDate: dateStr != null ? DateTime.tryParse(dateStr) ?? DateTime.now() : DateTime.now(),
-            customerName: partner.length > 1 ? partner[1].toString() : 'Walk-in Customer',
-            totalAmount: (item['amount_total'] as num?)?.toDouble() ?? 0.0,
-            paymentMethod: 'LANKAQR / Cash',
-            status: item['state']?.toString() ?? 'paid',
-          );
-        }).toList();
-
-        state = orders;
-      }
-    } catch (_) {
-      // Fallback
+    if (user == null || user.isDemo) return;
+    if (client == null || !client.isAuthenticated) {
+      throw OdooException('Not authenticated for POS history sync');
     }
+
+    final results = await client.searchRead(
+      model: 'pos.order',
+      fields: [
+        'id',
+        'pos_reference',
+        'partner_id',
+        'amount_total',
+        'date_order',
+        'state',
+      ],
+      limit: 40,
+    );
+
+    state = results.map((item) {
+      final partner =
+          item['partner_id'] is List ? item['partner_id'] as List : [0, 'Walk-in Customer'];
+      final dateStr = item['date_order']?.toString();
+      return PosPastOrder(
+        id: (item['id'] as num?)?.toInt() ?? 0,
+        receiptNumber: item['pos_reference']?.toString() ?? 'POS/RECEIPT',
+        orderDate: dateStr != null ? DateTime.tryParse(dateStr) ?? DateTime.now() : DateTime.now(),
+        customerName: partner.length > 1 ? partner[1].toString() : 'Walk-in Customer',
+        totalAmount: (item['amount_total'] as num?)?.toDouble() ?? 0.0,
+        paymentMethod: 'LANKAQR / Cash',
+        status: item['state']?.toString() ?? 'paid',
+      );
+    }).toList();
   }
 
   void addOrder(PosPastOrder order) {
@@ -170,6 +269,7 @@ class PosOrdersHistoryNotifier extends Notifier<List<PosPastOrder>> {
   }
 }
 
-final posOrdersHistoryProvider = NotifierProvider<PosOrdersHistoryNotifier, List<PosPastOrder>>(
+final posOrdersHistoryProvider =
+    NotifierProvider<PosOrdersHistoryNotifier, List<PosPastOrder>>(
   PosOrdersHistoryNotifier.new,
 );

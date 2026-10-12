@@ -30,8 +30,13 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
     bool enablePos = true;
     bool enableInventory = true;
     bool enableSales = false;
+    bool enableCrm = false;
     bool enableInvoicing = true;
+    bool enablePayments = true;
+    bool enableWarehouse = false;
     bool enableHr = false;
+    bool enableWebsite = false;
+    bool enableExecutive = false;
 
     showModalBottomSheet(
       context: context,
@@ -209,8 +214,13 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
                             enablePos: enablePos,
                             enableInventory: enableInventory,
                             enableSales: enableSales,
+                            enableCrm: enableCrm,
                             enableInvoicing: enableInvoicing,
+                            enablePayments: enablePayments,
+                            enableWarehouse: enableWarehouse,
                             enableHr: enableHr,
+                            enableWebsite: enableWebsite,
+                            enableExecutive: enableExecutive,
                           ),
                         );
 
@@ -235,98 +245,129 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
   }
 
   void _showEditFeaturesModal(BuildContext context, VendorTenant vendor) {
-    bool enablePos = vendor.features.enablePos;
-    bool enableInventory = vendor.features.enableInventory;
-    bool enableSales = vendor.features.enableSales;
-    bool enableInvoicing = vendor.features.enableInvoicing;
-    bool enableHr = vendor.features.enableHr;
+    var features = vendor.features;
 
     showModalBottomSheet(
       context: context,
       backgroundColor: FlexColors.surfaceDark,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setModalState) {
+            Widget toggle(String title, bool value, void Function(bool) onChanged) {
+              return SwitchListTile(
+                title: Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                value: value,
+                activeColor: FlexColors.primaryLight,
+                onChanged: (v) => setModalState(() => onChanged(v)),
+              );
+            }
+
             return Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('Modular Features: ${vendor.name}', style: FlexTypography.headlineSm),
-                      IconButton(
-                        icon: const Icon(Icons.close, color: FlexColors.textSecondaryDark),
-                        onPressed: () => Navigator.pop(ctx),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  SwitchListTile(
-                    title: const Text('POS Register'),
-                    value: enablePos,
-                    activeColor: FlexColors.primaryLight,
-                    onChanged: (v) => setModalState(() => enablePos = v),
-                  ),
-                  SwitchListTile(
-                    title: const Text('Inventory & Stock'),
-                    value: enableInventory,
-                    activeColor: FlexColors.primaryLight,
-                    onChanged: (v) => setModalState(() => enableInventory = v),
-                  ),
-                  SwitchListTile(
-                    title: const Text('Sales CRM & Quotes'),
-                    value: enableSales,
-                    activeColor: FlexColors.primaryLight,
-                    onChanged: (v) => setModalState(() => enableSales = v),
-                  ),
-                  SwitchListTile(
-                    title: const Text('Invoicing & Ledger'),
-                    value: enableInvoicing,
-                    activeColor: FlexColors.primaryLight,
-                    onChanged: (v) => setModalState(() => enableInvoicing = v),
-                  ),
-                  SwitchListTile(
-                    title: const Text('HR & Attendance'),
-                    value: enableHr,
-                    activeColor: FlexColors.primaryLight,
-                    onChanged: (v) => setModalState(() => enableHr = v),
-                  ),
-                  const SizedBox(height: 16),
-                  FlexButton(
-                    label: 'Save Feature Toggles',
-                    icon: Icons.check,
-                    height: 46,
-                    onPressed: () {
-                      final updated = vendor.features.copyWith(
-                        enablePos: enablePos,
-                        enableInventory: enableInventory,
-                        enableSales: enableSales,
-                        enableInvoicing: enableInvoicing,
-                        enableHr: enableHr,
-                      );
-                      ref.read(vendorsProvider.notifier).updateVendorFeatures(vendor.vendorId, updated);
-                      Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Updated features for ${vendor.name}!'),
-                          backgroundColor: FlexColors.success,
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text('Phase Features: ${vendor.name}', style: FlexTypography.headlineSm),
                         ),
-                      );
-                    },
-                  ),
-                ],
+                        IconButton(
+                          icon: const Icon(Icons.close, color: FlexColors.textSecondaryDark),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FlexButton(
+                            label: 'Small Shop',
+                            variant: FlexButtonVariant.secondary,
+                            height: 40,
+                            onPressed: () => setModalState(() => features = VendorFeatures.smallShop),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: FlexButton(
+                            label: 'Mall',
+                            variant: FlexButtonVariant.secondary,
+                            height: 40,
+                            onPressed: () => setModalState(() => features = VendorFeatures.mall),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    toggle('POS / Register', features.enablePos,
+                        (v) => features = features.copyWith(enablePos: v)),
+                    toggle('Inventory & Barcode', features.enableInventory,
+                        (v) => features = features.copyWith(enableInventory: v)),
+                    toggle('Sales / Quotations', features.enableSales,
+                        (v) => features = features.copyWith(enableSales: v)),
+                    toggle('CRM Pipeline', features.enableCrm,
+                        (v) => features = features.copyWith(enableCrm: v)),
+                    toggle('Customer Invoices', features.enableInvoicing,
+                        (v) => features = features.copyWith(enableInvoicing: v)),
+                    toggle('Payments', features.enablePayments,
+                        (v) => features = features.copyWith(enablePayments: v)),
+                    toggle('Warehouse Pickings', features.enableWarehouse,
+                        (v) => features = features.copyWith(enableWarehouse: v)),
+                    toggle('HR Self-Service', features.enableHr,
+                        (v) => features = features.copyWith(enableHr: v)),
+                    toggle('Website / Shop API', features.enableWebsite,
+                        (v) => features = features.copyWith(enableWebsite: v)),
+                    toggle('Executive KPIs', features.enableExecutive,
+                        (v) => features = features.copyWith(enableExecutive: v)),
+                    const SizedBox(height: 16),
+                    FlexButton(
+                      label: 'Save Feature Matrix',
+                      icon: Icons.check,
+                      height: 46,
+                      onPressed: () async {
+                        await ref
+                            .read(vendorsProvider.notifier)
+                            .updateVendorFeatures(vendor.vendorId, features);
+                        if (!context.mounted) return;
+                        Navigator.pop(ctx);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Features saved for ${vendor.vendorId} only — other vendors unchanged.',
+                            ),
+                            backgroundColor: FlexColors.success,
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
               ),
             );
           },
         );
       },
     );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() => ref.read(vendorsProvider.notifier).syncFromServer());
   }
 
   @override
@@ -441,11 +482,25 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
                               side: const BorderSide(color: FlexColors.primaryLight),
                               minimumSize: Size.zero,
                             ),
-                            onPressed: () {
+                            onPressed: () async {
                               ref.read(currentVendorProvider.notifier).selectVendor(vendor.vendorId);
+                              final user = ref.read(currentUserProvider);
+                              if (user != null && !user.isDemo && vendor.id > 0) {
+                                try {
+                                  await ref
+                                      .read(currentUserProvider.notifier)
+                                      .switchCompany(vendor.id);
+                                } catch (_) {
+                                  // Local selection still updated; RPC switch may fail offline.
+                                }
+                              }
+                              if (!context.mounted) return;
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text('Switched active vendor to ${vendor.name} (${vendor.vendorId})'),
+                                  content: Text(
+                                    'Active vendor context: ${vendor.name} (${vendor.vendorId}). '
+                                    'Features for this slot only.',
+                                  ),
                                   backgroundColor: FlexColors.surfaceRaisedDark,
                                   behavior: SnackBarBehavior.floating,
                                 ),

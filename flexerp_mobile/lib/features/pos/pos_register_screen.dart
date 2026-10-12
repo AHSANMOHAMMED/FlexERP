@@ -10,6 +10,7 @@ import '../../core/localization/lk_formatters.dart';
 import '../../data/models/pos_order.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/pos_repository.dart';
+import '../../data/repositories/partner_repository.dart';
 import '../../data/repositories/vendor_repository.dart';
 import '../../data/repositories/vendor_inventory_repository.dart';
 import 'pos_tender_screen.dart';
@@ -25,13 +26,23 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
   String _selectedCategory = 'All';
   final List<String> _categories = ['All', 'Safety & PPE', 'Hand Tools', 'Power Tools', 'Electrical', 'Hardware'];
   final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _desktopBarcodeCtrl = TextEditingController();
   String _searchQuery = '';
   String? _lastLiveSyncNotice;
+  int? _selectedPartnerId;
+  String _selectedPartnerName = 'Walk-in';
+  bool _createInvoice = false;
 
   @override
   void dispose() {
     _searchController.dispose();
+    _desktopBarcodeCtrl.dispose();
     super.dispose();
+  }
+
+  bool get _isDesktop {
+    final p = Theme.of(context).platform;
+    return p == TargetPlatform.macOS || p == TargetPlatform.windows || p == TargetPlatform.linux;
   }
 
   void _onBarcodeScan(String barcode) {
@@ -295,6 +306,26 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
                         child: const Icon(Icons.close, color: FlexColors.textSecondaryDark, size: 14),
                       ),
                     ],
+                  ),
+                ),
+
+              // Desktop / wedge scanner: keyboard barcode entry (no camera crash)
+              if (_isDesktop)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: TextField(
+                    controller: _desktopBarcodeCtrl,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Scan barcode (keyboard / USB scanner)',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.qr_code_scanner),
+                    ),
+                    onSubmitted: (code) {
+                      if (code.trim().isEmpty) return;
+                      _onBarcodeScan(code.trim());
+                      _desktopBarcodeCtrl.clear();
+                    },
                   ),
                 ),
 
@@ -562,6 +593,49 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
                       ],
                     ),
                     const SizedBox(height: 8),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text('Customer: $_selectedPartnerName', style: FlexTypography.labelMd),
+                      subtitle: const Text('Tap to pick customer (optional)'),
+                      trailing: const Icon(Icons.person_search),
+                      onTap: () async {
+                        await ref.read(partnersProvider.notifier).syncFromOdoo();
+                        final partners = ref.read(partnersProvider);
+                        if (!context.mounted) return;
+                        final picked = await showModalBottomSheet<Map<String, dynamic>>(
+                          context: context,
+                          backgroundColor: FlexColors.surfaceDark,
+                          builder: (ctx) => SafeArea(
+                            child: ListView(
+                              children: [
+                                ListTile(
+                                  title: const Text('Walk-in'),
+                                  onTap: () => Navigator.pop(ctx, {'id': null, 'name': 'Walk-in'}),
+                                ),
+                                ...partners.map((p) => ListTile(
+                                      title: Text(p.name),
+                                      subtitle: Text(p.phone),
+                                      onTap: () => Navigator.pop(ctx, {'id': p.id, 'name': p.name}),
+                                    )),
+                              ],
+                            ),
+                          ),
+                        );
+                        if (picked != null) {
+                          setState(() {
+                            _selectedPartnerId = picked['id'] as int?;
+                            _selectedPartnerName = picked['name']?.toString() ?? 'Walk-in';
+                          });
+                        }
+                      },
+                    ),
+                    if (ref.watch(currentVendorFeaturesProvider).enableInvoicing)
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Create tax invoice after sale'),
+                        value: _createInvoice,
+                        onChanged: (v) => setState(() => _createInvoice = v),
+                      ),
                     ...cart.map((item) {
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 10),
@@ -589,6 +663,12 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
                                   icon: const Icon(Icons.add_circle_outline, size: 20, color: FlexColors.primaryLight),
                                   onPressed: () {
                                     ref.read(posCartProvider.notifier).updateQuantity(item.product.id, item.quantity + 1);
+                                  },
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline, size: 20, color: FlexColors.danger),
+                                  onPressed: () {
+                                    ref.read(posCartProvider.notifier).updateQuantity(item.product.id, 0);
                                   },
                                 ),
                               ],
@@ -622,18 +702,22 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
                       label: 'Proceed to Payment Tender',
                       icon: Icons.payments,
                       height: 48,
-                      onPressed: () {
-                        Navigator.pop(context);
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => PosTenderScreen(
-                              totalAmount: cartTotal,
-                              onOrderComplete: () {},
-                            ),
-                          ),
-                        );
-                      },
+                      onPressed: cart.isEmpty
+                          ? null
+                          : () {
+                              Navigator.pop(context);
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => PosTenderScreen(
+                                    totalAmount: cartTotal,
+                                    partnerId: _selectedPartnerId,
+                                    createInvoice: _createInvoice,
+                                    onOrderComplete: () {},
+                                  ),
+                                ),
+                              );
+                            },
                     ),
                   ],
                 ),

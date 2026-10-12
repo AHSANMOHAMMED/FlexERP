@@ -38,6 +38,14 @@ class FlexBottomNav extends StatelessWidget {
           FlexNavItem(icon: Icons.account_balance_wallet_outlined, activeIcon: Icons.account_balance_wallet, label: 'Finance'),
           FlexNavItem(icon: Icons.person_outline, activeIcon: Icons.person, label: 'Profile'),
         ];
+      case UserRole.vendorAdmin:
+        return const [
+          FlexNavItem(icon: Icons.store_outlined, activeIcon: Icons.store, label: 'My Vendor'),
+          FlexNavItem(icon: Icons.groups_outlined, activeIcon: Icons.groups, label: 'Staff'),
+          FlexNavItem(icon: Icons.inventory_2_outlined, activeIcon: Icons.inventory_2, label: 'Stock'),
+          FlexNavItem(icon: Icons.point_of_sale, activeIcon: Icons.point_of_sale, label: 'POS'),
+          FlexNavItem(icon: Icons.person_outline, activeIcon: Icons.person, label: 'Profile'),
+        ];
       case UserRole.salesRep:
         return const [
           FlexNavItem(icon: Icons.dashboard_outlined, activeIcon: Icons.dashboard, label: 'Dashboard'),

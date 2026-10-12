@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_company_form_flexerp_branding" model="ir.ui.view">
+        <field name="name">res.company.form.flexerp.branding</field>
+        <field name="model">res.company</field>
+        <field name="inherit_id" ref="base.view_company_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="FlexERP Branding" name="flexerp_branding">
+                    <group>
+                        <field name="flexerp_watermark_enabled"/>
+                        <field name="flexerp_seal" widget="image" class="oe_avatar"/>
+                    </group>
+                    <p class="text-muted">
+                        Company logo (General Information) is used as a faint watermark.
+                        Upload a shop seal for PAID invoices.
+                    </p>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>

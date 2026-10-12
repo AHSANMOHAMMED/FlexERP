@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="action_report_flexerp_branded_invoice" model="ir.actions.report">
+        <field name="name">FlexERP Branded Invoice</field>
+        <field name="model">account.move</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">flexerp_invoice_branding.report_branded_invoice</field>
+        <field name="report_file">flexerp_invoice_branding.report_branded_invoice</field>
+        <field name="print_report_name">'Invoice-%s' % (object.name)</field>
+        <field name="binding_model_id" ref="account.model_account_move"/>
+        <field name="binding_type">report</field>
+    </record>
+</odoo>

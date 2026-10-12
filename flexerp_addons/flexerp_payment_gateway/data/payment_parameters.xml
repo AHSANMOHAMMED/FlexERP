@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+    <record id="flexerp_pay_provider" model="ir.config_parameter">
+        <field name="key">flexerp.payment.provider</field>
+        <field name="value">lankaqr_stub</field>
+    </record>
+    <record id="flexerp_pay_endpoint" model="ir.config_parameter">
+        <field name="key">flexerp.payment.endpoint</field>
+        <field name="value"></field>
+    </record>
+    <record id="flexerp_pay_merchant" model="ir.config_parameter">
+        <field name="key">flexerp.payment.merchant_id</field>
+        <field name="value"></field>
+    </record>
+    <record id="flexerp_pay_secret" model="ir.config_parameter">
+        <field name="key">flexerp.payment.secret</field>
+        <field name="value"></field>
+    </record>
+</odoo>

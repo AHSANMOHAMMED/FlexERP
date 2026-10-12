@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="report_branded_invoice">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="o">
+                <t t-set="company" t-value="o.company_id"/>
+                <div class="article o_report_layout_standard" t-att-data-oe-model="o._name" t-att-data-oe-id="o.id">
+                    <div class="page" style="position: relative; min-height: 900px;">
+                        <t t-if="company.flexerp_watermark_enabled and company.logo">
+                            <div style="position: absolute; top: 30%; left: 15%; opacity: 0.08; z-index: 0; width: 70%; text-align: center;">
+                                <img t-att-src="image_data_uri(company.logo)" style="max-width: 100%; max-height: 320px;"/>
+                            </div>
+                        </t>
+                        <div style="position: relative; z-index: 1;">
+                            <div class="row mb-3">
+                                <div class="col-6">
+                                    <t t-if="company.logo">
+                                        <img t-att-src="image_data_uri(company.logo)" style="max-height: 80px;"/>
+                                    </t>
+                                    <h3 t-field="company.name"/>
+                                    <div t-field="company.partner_id" t-options='{"widget": "contact", "fields": ["address", "phone"], "no_marker": True}'/>
+                                </div>
+                                <div class="col-6 text-end">
+                                    <h2>TAX INVOICE</h2>
+                                    <p><strong t-field="o.name"/></p>
+                                    <p>Date: <span t-field="o.invoice_date"/></p>
+                                    <p>Due: <span t-field="o.invoice_date_due"/></p>
+                                    <p>State: <span t-field="o.payment_state"/></p>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <strong>Bill To</strong>
+                                <div t-field="o.partner_id" t-options='{"widget": "contact", "fields": ["address", "name", "phone", "vat"], "no_marker": True}'/>
+                            </div>
+                            <table class="table table-sm o_main_table">
+                                <thead>
+                                    <tr>
+                                        <th>Description</th>
+                                        <th class="text-end">Qty</th>
+                                        <th class="text-end">Unit</th>
+                                        <th class="text-end">Subtotal</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr t-foreach="o.invoice_line_ids.filtered(lambda l: not l.display_type)" t-as="line">
+                                        <td><span t-field="line.name"/></td>
+                                        <td class="text-end"><span t-field="line.quantity"/></td>
+                                        <td class="text-end"><span t-field="line.price_unit"/></td>
+                                        <td class="text-end"><span t-field="line.price_subtotal"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div class="row">
+                                <div class="col-6"/>
+                                <div class="col-6">
+                                    <table class="table table-sm">
+                                        <tr>
+                                            <td>Untaxed</td>
+                                            <td class="text-end"><span t-field="o.amount_untaxed"/></td>
+                                        </tr>
+                                        <tr>
+                                            <td>Tax</td>
+                                            <td class="text-end"><span t-field="o.amount_tax"/></td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Total</strong></td>
+                                            <td class="text-end"><strong t-field="o.amount_total"/></strong></td>
+                                        </tr>
+                                        <tr>
+                                            <td>Residual</td>
+                                            <td class="text-end"><span t-field="o.amount_residual"/></td>
+                                        </tr>
+                                    </table>
+                                </div>
+                            </div>
+                            <t t-if="o.payment_state in ('paid', 'in_payment')">
+                                <div style="margin-top: 24px; text-align: right;">
+                                    <t t-if="company.flexerp_seal">
+                                        <img t-att-src="image_data_uri(company.flexerp_seal)" style="max-height: 100px; opacity: 0.9;"/>
+                                    </t>
+                                    <div style="display: inline-block; border: 3px solid #16a34a; color: #16a34a; padding: 8px 16px; font-weight: bold; transform: rotate(-8deg);">
+                                        PAID / SEALED
+                                    </div>
+                                </div>
+                            </t>
+                        </div>
+                    </div>
+                </div>
+            </t>
+        </t>
+    </template>
+</odoo>

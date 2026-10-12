@@ -42,8 +42,8 @@ void main() {
   runApp(const ProviderScope(child: FlexErpApp()));
 }
 
-
 enum AppAuthStep {
+  bootstrapping,
   serverDiscovery,
   login,
   authenticated,
@@ -57,7 +57,21 @@ class FlexErpApp extends ConsumerStatefulWidget {
 }
 
 class _FlexErpAppState extends ConsumerState<FlexErpApp> {
-  AppAuthStep _authStep = AppAuthStep.authenticated; // Start authenticated in Sri Lanka sandbox by default
+  AppAuthStep _authStep = AppAuthStep.bootstrapping;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
+  }
+
+  Future<void> _bootstrap() async {
+    final restored = await ref.read(currentUserProvider.notifier).tryRestoreSession();
+    if (!mounted) return;
+    setState(() {
+      _authStep = restored ? AppAuthStep.authenticated : AppAuthStep.serverDiscovery;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -72,10 +86,29 @@ class _FlexErpAppState extends ConsumerState<FlexErpApp> {
   }
 
   Widget _buildCurrentScreen(bool hasUser) {
+    if (_authStep == AppAuthStep.bootstrapping) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF081425),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: Color(0xFF6366F1)),
+              SizedBox(height: 16),
+              Text('Restoring secure session…', style: TextStyle(color: Colors.white70)),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (!hasUser || _authStep == AppAuthStep.serverDiscovery) {
       return ServerConnectionScreen(
         onProceedToLogin: () {
           setState(() => _authStep = AppAuthStep.login);
+        },
+        onDemoReady: () {
+          setState(() => _authStep = AppAuthStep.authenticated);
         },
       );
     }

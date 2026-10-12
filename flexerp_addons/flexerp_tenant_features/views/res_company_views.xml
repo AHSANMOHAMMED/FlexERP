@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_company_form_flexerp" model="ir.ui.view">
+        <field name="name">res.company.form.flexerp</field>
+        <field name="model">res.company</field>
+        <field name="inherit_id" ref="base.view_company_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="FlexERP Mobile" name="flexerp_mobile">
+                    <group>
+                        <field name="flexerp_vendor_code"/>
+                        <field name="flexerp_preset"/>
+                        <field name="flexerp_is_active_vendor"/>
+                        <button name="action_apply_flexerp_preset"
+                                type="object"
+                                string="Apply Preset"
+                                class="btn-primary"/>
+                    </group>
+                    <field name="flexerp_feature_ids">
+                        <list editable="bottom">
+                            <field name="key"/>
+                            <field name="enabled"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>

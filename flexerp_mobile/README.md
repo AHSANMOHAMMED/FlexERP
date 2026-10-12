@@ -1,17 +1,29 @@
-# flexerp_mobile
+# FlexERP Mobile / Desktop
 
-A new Flutter project.
+Flutter client for FlexERP (`dev` branch Odoo + `flexerp_addons`).
 
-## Getting Started
+## Roles
 
-This project is a starting point for a Flutter application.
+- **Platform Super Admin** — ops, tenants, global KPIs
+- **Vendor Admin** — own slot staff / stock / sales
+- **POS Cashier** — register, tender (Cash / Card / LankaQR), receipt, WhatsApp, tax invoice
 
-A few resources to get you started if this is your first Flutter project:
+## Desktop builds (Vendor Admin & Cashier)
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```bash
+cd flexerp_mobile
+flutter pub get
+flutter build windows
+flutter build macos
+flutter build linux
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Desktop notes:
+
+- Camera barcode scanning is disabled; use USB wedge / keyboard entry (POS + warehouse screens).
+- Corrupt session cache is cleared automatically on boot.
+- `ErrorWidget` / `FlutterError` handlers prevent blank white screens.
+
+## Live sync
+
+Authenticated sessions poll `/flexerp/mobile/live/poll` every ~6s and refresh stock, sales, invoices, and KPIs without a manual pull-to-refresh.

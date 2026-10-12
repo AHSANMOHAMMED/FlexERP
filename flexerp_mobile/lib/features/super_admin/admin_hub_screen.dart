@@ -15,16 +15,39 @@ import '../../data/repositories/admin_repository.dart';
 import 'vendor_management_screen.dart';
 import '../warehouse/vendor_inventory_management_screen.dart';
 
-class AdminHubScreen extends ConsumerWidget {
+class AdminHubScreen extends ConsumerStatefulWidget {
   const AdminHubScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AdminHubScreen> createState() => _AdminHubScreenState();
+}
+
+class _AdminHubScreenState extends ConsumerState<AdminHubScreen> {
+  bool _opsBusy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() async {
+      await ref.read(opsOverviewProvider.notifier).refresh();
+      await ref.read(pendingApprovalsProvider.notifier).syncFromServer();
+      final user = ref.read(currentUserProvider);
+      if (user != null) {
+        await ref.read(managedUsersProvider.notifier).syncForCompany(user.companyId);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final currentBranch = ref.watch(currentBranchProvider);
     final pendingApprovals = ref.watch(pendingApprovalsProvider);
     final managedUsers = ref.watch(managedUsersProvider);
     final adminRepo = ref.watch(adminRepositoryProvider);
     final healthMetrics = adminRepo.getHealthMetrics();
+    final opsState = ref.watch(opsOverviewProvider);
+    final providerStatus =
+        (opsState.overview?['provider'] as Map?)?['status']?.toString() ?? 'unknown';
 
     return Scaffold(
       backgroundColor: FlexColors.canvasDark,
@@ -35,12 +58,106 @@ class AdminHubScreen extends ConsumerWidget {
         onBranchChanged: (branch) {
           ref.read(currentBranchProvider.notifier).setBranch(branch);
         },
+        onSync: () async {
+          await ref.read(opsOverviewProvider.notifier).refresh();
+          await ref.read(pendingApprovalsProvider.notifier).syncFromServer();
+        },
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            FlexCard(
+              backgroundColor: FlexColors.surfaceRaisedDark,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.cloud_sync, color: FlexColors.primaryLight, size: 20),
+                      const SizedBox(width: 8),
+                      Text('OPS CONTROL', style: FlexTypography.labelSm),
+                      const Spacer(),
+                      FlexBadge(
+                        text: providerStatus.toUpperCase(),
+                        variant: providerStatus == 'ok'
+                            ? FlexBadgeVariant.success
+                            : FlexBadgeVariant.warning,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text('Instance wake & pool', style: FlexTypography.headlineSm),
+                  const SizedBox(height: 4),
+                  Text(
+                    providerStatus == 'not_configured'
+                        ? 'Provider endpoints not set yet — configure Docker/Cloud later. Wake returns not_configured until then.'
+                        : (opsState.overview?['provider'] as Map?)?['message']?.toString() ??
+                            'Live ops provider connected.',
+                    style: FlexTypography.bodySm,
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FlexButton(
+                          label: _opsBusy ? 'Working…' : 'Wake',
+                          icon: Icons.power_settings_new,
+                          height: 40,
+                          onPressed: _opsBusy
+                              ? null
+                              : () async {
+                                  setState(() => _opsBusy = true);
+                                  try {
+                                    final result =
+                                        await ref.read(opsOverviewProvider.notifier).wake();
+                                    if (!mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Wake: ${result['status'] ?? result}',
+                                        ),
+                                      ),
+                                    );
+                                  } finally {
+                                    if (mounted) setState(() => _opsBusy = false);
+                                  }
+                                },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _opsBusy
+                              ? null
+                              : () async {
+                                  setState(() => _opsBusy = true);
+                                  try {
+                                    final result =
+                                        await ref.read(opsOverviewProvider.notifier).restart();
+                                    if (!mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Restart: ${result['status'] ?? result}',
+                                        ),
+                                      ),
+                                    );
+                                  } finally {
+                                    if (mounted) setState(() => _opsBusy = false);
+                                  }
+                                },
+                          icon: const Icon(Icons.restart_alt, size: 16),
+                          label: const Text('Restart'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
             // Top Multi-Company Summary Card
             FlexCard(
               backgroundColor: FlexColors.surfaceRaisedDark,
@@ -128,7 +245,7 @@ class AdminHubScreen extends ConsumerWidget {
                   Text('Vendor Tenant Isolation & Stock Engine', style: FlexTypography.headlineSm),
                   const SizedBox(height: 4),
                   const Text(
-                    'Manage partitioned vendor databases, provision cashiers, toggle modular features, and adjust stock in real-time.',
+                    'Manage vendor company slots (one shared DB), provision cashiers, toggle modular features, and adjust stock in real-time.',
                     style: TextStyle(color: FlexColors.textSecondaryDark, fontSize: 12),
                   ),
                   const SizedBox(height: 14),
@@ -454,21 +571,16 @@ class AdminHubScreen extends ConsumerWidget {
                 ),
                 FlexButton(
                   label: 'Provision',
-                  onPressed: () {
-                    if (nameCtrl.text.isNotEmpty) {
-                      ref.read(managedUsersProvider.notifier).addUser(
-                        ManagedUser(
-                          id: DateTime.now().millisecondsSinceEpoch,
-                          name: nameCtrl.text,
-                          email: emailCtrl.text,
-                          nicOrId: nicCtrl.text,
-                          role: selectedRole,
-                          assignedBranch: 'Colombo HQ',
-                          lastActive: DateTime.now(),
-                        ),
-                      );
-                      Navigator.pop(context);
-                    }
+                  onPressed: () async {
+                    if (nameCtrl.text.isEmpty || emailCtrl.text.isEmpty) return;
+                    final user = ref.read(currentUserProvider);
+                    await ref.read(managedUsersProvider.notifier).createUser(
+                          companyId: user?.companyId ?? 1,
+                          name: nameCtrl.text.trim(),
+                          login: emailCtrl.text.trim(),
+                          role: selectedRole.name,
+                        );
+                    if (context.mounted) Navigator.pop(context);
                   },
                 ),
               ],

@@ -26,8 +26,14 @@ class ProfileScreen extends ConsumerWidget {
         subtitle: 'Enterprise Security Context',
         currentBranch: currentBranch,
         showCompanySwitcher: true,
-        onBranchChanged: (branch) {
+        onBranchChanged: (branch) async {
           ref.read(currentBranchProvider.notifier).setBranch(branch);
+          final user = ref.read(currentUserProvider);
+          if (user != null && !user.isDemo) {
+            try {
+              await ref.read(currentUserProvider.notifier).switchCompany(branch.id);
+            } catch (_) {}
+          }
         },
       ),
       body: SingleChildScrollView(
@@ -69,70 +75,92 @@ class ProfileScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 20),
 
-            // Live Role Switcher for Pair-Programming & Multi-Role Testing
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('Switch Active Role', style: FlexTypography.headlineMd),
-                const FlexBadge(text: 'DYNAMIC RBAC', variant: FlexBadgeVariant.success),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Switch between enterprise roles to test distinct navigation, feature scopes, and data permissions immediately.',
-              style: FlexTypography.bodySm,
-            ),
-            const SizedBox(height: 12),
-
-            ...UserRole.values.map((role) {
-              final isCurrent = user?.role == role;
-              return Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                decoration: BoxDecoration(
-                  color: isCurrent ? FlexColors.surfaceRaisedDark : Colors.transparent,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: isCurrent ? FlexColors.primary : FlexColors.borderDark,
-                    width: 1,
-                  ),
-                ),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  leading: Icon(
-                    role == UserRole.superAdmin
-                        ? Icons.shield
-                        : role == UserRole.salesRep
-                            ? Icons.trending_up
-                            : role == UserRole.warehouseOp
-                                ? Icons.inventory_2
-                                : role == UserRole.accountant
-                                    ? Icons.receipt_long
-                                    : role == UserRole.posCashier
-                                        ? Icons.point_of_sale
-                                        : Icons.badge,
-                    color: isCurrent ? FlexColors.primaryLight : FlexColors.textDisabledDark,
-                  ),
-                  title: Text(
-                    role.displayName,
-                    style: FlexTypography.labelLg.copyWith(
-                      color: isCurrent ? FlexColors.primaryLight : FlexColors.textPrimaryDark,
+            if (user?.isDemo == true) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Demo Role Switcher', style: FlexTypography.headlineMd),
+                  const FlexBadge(text: 'SANDBOX ONLY', variant: FlexBadgeVariant.warning),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Role switching is available only in demo sandbox. Live sessions use Odoo security groups.',
+                style: FlexTypography.bodySm,
+              ),
+              const SizedBox(height: 12),
+              ...UserRole.values.map((role) {
+                final isCurrent = user?.role == role;
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: isCurrent ? FlexColors.surfaceRaisedDark : Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: isCurrent ? FlexColors.primary : FlexColors.borderDark,
+                      width: 1,
                     ),
                   ),
-                  subtitle: Text(
-                    'Odoo Group: ${role.odooGroupKey}',
-                    style: FlexTypography.bodySm.copyWith(fontSize: 11),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    leading: Icon(
+                      role == UserRole.superAdmin
+                          ? Icons.shield
+                          : role == UserRole.vendorAdmin
+                              ? Icons.store
+                              : role == UserRole.salesRep
+                                  ? Icons.trending_up
+                                  : role == UserRole.warehouseOp
+                                      ? Icons.inventory_2
+                                      : role == UserRole.accountant
+                                          ? Icons.receipt_long
+                                          : role == UserRole.posCashier
+                                              ? Icons.point_of_sale
+                                              : Icons.badge,
+                      color: isCurrent ? FlexColors.primaryLight : FlexColors.textDisabledDark,
+                    ),
+                    title: Text(
+                      role.displayName,
+                      style: FlexTypography.labelLg.copyWith(
+                        color: isCurrent ? FlexColors.primaryLight : FlexColors.textPrimaryDark,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Odoo Group: ${role.odooGroupKey}',
+                      style: FlexTypography.bodySm.copyWith(fontSize: 11),
+                    ),
+                    trailing: isCurrent ? const Icon(Icons.check_circle, color: FlexColors.primary) : null,
+                    onTap: () {
+                      ref.read(currentUserProvider.notifier).switchRole(role);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Switched to ${role.displayName} navigation!')),
+                      );
+                    },
                   ),
-                  trailing: isCurrent ? const Icon(Icons.check_circle, color: FlexColors.primary) : null,
-                  onTap: () {
-                    ref.read(currentUserProvider.notifier).switchRole(role);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Switched to ${role.displayName} navigation!')),
-                    );
-                  },
+                );
+              }),
+              const SizedBox(height: 20),
+            ] else ...[
+              FlexCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('SECURITY', style: FlexTypography.labelSm),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Role is enforced by Odoo groups (${user?.role.odooGroupKey}). Feature modules follow Super Admin tenant flags.',
+                      style: FlexTypography.bodySm,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Active features: ${user?.features.summary ?? '—'}',
+                      style: FlexTypography.bodySm.copyWith(color: FlexColors.primaryLight),
+                    ),
+                  ],
                 ),
-              );
-            }),
-            const SizedBox(height: 20),
+              ),
+              const SizedBox(height: 20),
+            ],
 
             // Security & Instance Details
             FlexCard(

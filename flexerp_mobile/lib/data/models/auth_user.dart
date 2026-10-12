@@ -1,5 +1,8 @@
+import 'vendor_model.dart';
+
 enum UserRole {
   superAdmin,
+  vendorAdmin,
   salesRep,
   warehouseOp,
   accountant,
@@ -11,7 +14,9 @@ extension UserRoleExtension on UserRole {
   String get displayName {
     switch (this) {
       case UserRole.superAdmin:
-        return 'Super Admin / C-Level';
+        return 'Platform Super Admin';
+      case UserRole.vendorAdmin:
+        return 'Vendor Admin';
       case UserRole.salesRep:
         return 'Sales Representative';
       case UserRole.warehouseOp:
@@ -28,7 +33,9 @@ extension UserRoleExtension on UserRole {
   String get odooGroupKey {
     switch (this) {
       case UserRole.superAdmin:
-        return 'base.group_system';
+        return 'flexerp_vendor_rbac.group_platform_super_admin';
+      case UserRole.vendorAdmin:
+        return 'flexerp_vendor_rbac.group_vendor_admin';
       case UserRole.salesRep:
         return 'sales_team.group_sale_salesman';
       case UserRole.warehouseOp:
@@ -36,7 +43,7 @@ extension UserRoleExtension on UserRole {
       case UserRole.accountant:
         return 'account.group_account_invoice';
       case UserRole.posCashier:
-        return 'point_of_sale.group_pos_user';
+        return 'flexerp_vendor_rbac.group_vendor_cashier';
       case UserRole.employee:
         return 'base.group_user';
     }
@@ -56,6 +63,8 @@ class AuthUser {
   final bool isDemo;
   final String? sessionId;
   final String vendorId;
+  final VendorFeatures features;
+  final bool enforceHttps;
 
   const AuthUser({
     required this.uid,
@@ -70,6 +79,8 @@ class AuthUser {
     this.isDemo = false,
     this.sessionId,
     this.vendorId = 'VND-001',
+    this.features = const VendorFeatures(),
+    this.enforceHttps = false,
   });
 
   AuthUser copyWith({
@@ -85,6 +96,8 @@ class AuthUser {
     bool? isDemo,
     String? sessionId,
     String? vendorId,
+    VendorFeatures? features,
+    bool? enforceHttps,
   }) {
     return AuthUser(
       uid: uid ?? this.uid,
@@ -99,6 +112,8 @@ class AuthUser {
       isDemo: isDemo ?? this.isDemo,
       sessionId: sessionId ?? this.sessionId,
       vendorId: vendorId ?? this.vendorId,
+      features: features ?? this.features,
+      enforceHttps: enforceHttps ?? this.enforceHttps,
     );
   }
 }

@@ -1,0 +1,4 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_flexerp_vendor_slot_user,flexerp.vendor.slot.user,model_flexerp_vendor_slot,base.group_user,1,0,0,0
+access_flexerp_vendor_slot_system,flexerp.vendor.slot.system,model_flexerp_vendor_slot,base.group_system,1,1,1,1
+access_flexerp_vendor_slot_vendor_admin,flexerp.vendor.slot.vendor.admin,model_flexerp_vendor_slot,group_vendor_admin,1,0,0,0
