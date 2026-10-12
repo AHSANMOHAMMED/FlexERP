@@ -1,0 +1,46 @@
+name: Backend Addons CI
+
+on:
+  push:
+    branches: [ dev, main, master ]
+    paths:
+      - 'flexerp_addons/**'
+      - '.github/workflows/backend-ci.yml'
+      - '.github/scripts/validate_addons.py'
+  pull_request:
+    branches: [ dev, main, master ]
+    paths:
+      - 'flexerp_addons/**'
+      - '.github/workflows/backend-ci.yml'
+      - '.github/scripts/validate_addons.py'
+  workflow_dispatch:
+
+jobs:
+  validate-addons:
+    name: Validate Odoo Addons
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Linter
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: Compile Python Files (Syntax Check)
+        run: |
+          python3 -m py_compile $(find flexerp_addons -name "*.py")
+
+      - name: Validate Manifests, XML Views & Security Access
+        run: |
+          python3 .github/scripts/validate_addons.py
+
+      - name: Run Ruff Lint Check
+        run: |
+          ruff check flexerp_addons --exit-zero

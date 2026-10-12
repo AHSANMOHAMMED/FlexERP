@@ -64,7 +64,7 @@
                                         </tr>
                                         <tr>
                                             <td><strong>Total</strong></td>
-                                            <td class="text-end"><strong t-field="o.amount_total"/></strong></td>
+                                            <td class="text-end"><strong t-field="o.amount_total"/></td>
                                         </tr>
                                         <tr>
                                             <td>Residual</td>
