@@ -4,11 +4,22 @@ import '../../core/theme/flex_colors.dart';
 import '../../core/widgets/flex_app_bar.dart';
 import '../../data/repositories/accounting_repository.dart';
 
-class FinanceHubScreen extends ConsumerWidget {
+class FinanceHubScreen extends ConsumerStatefulWidget {
   const FinanceHubScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<FinanceHubScreen> createState() => _FinanceHubScreenState();
+}
+
+class _FinanceHubScreenState extends ConsumerState<FinanceHubScreen> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() => ref.read(invoicesProvider.notifier).syncFromOdoo());
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final invoices = ref.watch(invoicesProvider);
 
     final totalReceivable = invoices

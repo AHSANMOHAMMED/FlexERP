@@ -32,6 +32,7 @@ import '../features/profile/profile_screen.dart';
 import '../features/website/shop_catalog_screen.dart';
 import '../features/vendor_admin/vendor_admin_hub_screen.dart';
 import '../features/vendor_admin/vendor_staff_screen.dart';
+import '../features/purchase/purchase_orders_screen.dart';
 import '../core/offline/offline_queue.dart';
 import '../core/live/live_sync.dart';
 
@@ -51,12 +52,13 @@ class AppShell extends ConsumerStatefulWidget {
   ConsumerState<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends ConsumerState<AppShell> {
+class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver {
   int _currentTabIndex = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     Future.microtask(() {
       ref.read(offlineQueueProvider.notifier).flush();
       ref.read(liveSyncProvider.notifier).start();
@@ -64,8 +66,19 @@ class _AppShellState extends ConsumerState<AppShell> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final sync = ref.read(liveSyncProvider.notifier);
+    final foreground = state == AppLifecycleState.resumed;
+    sync.setForeground(foreground);
+    if (!foreground) {
+      // Keep timer but polls no-op while backgrounded.
+    }
+  }
+
+  @override
   void dispose() {
-    // Riverpod dispose handles LiveSyncNotifier timer via ref.onDispose.
+    WidgetsBinding.instance.removeObserver(this);
+    // LiveSyncNotifier cancels its timer via ref.onDispose.
     super.dispose();
   }
 
@@ -165,10 +178,13 @@ class _AppShellState extends ConsumerState<AppShell> {
         ];
 
       case UserRole.vendorAdmin:
-        // Tab indices: 0 hub, 1 staff, then optional stock / POS / sales / invoices, profile last.
+        // Tab indices: 0 hub, 1 staff, then optional modules, profile last.
         var nextIndex = 2;
         final stockIndex = features.enableInventory ? nextIndex++ : -1;
         final posIndex = features.enablePos ? nextIndex++ : -1;
+        if (features.enableSales) nextIndex++;
+        if (features.enableInvoicing) nextIndex++;
+        final purchaseIndex = features.enablePurchase ? nextIndex++ : -1;
         final tabs = <_ShellTab>[
           _ShellTab(
             navItem: const FlexNavItem(
@@ -183,6 +199,9 @@ class _AppShellState extends ConsumerState<AppShell> {
                   : null,
               onOpenPos:
                   posIndex >= 0 ? () => setState(() => _currentTabIndex = posIndex) : null,
+              onOpenPurchase: purchaseIndex >= 0
+                  ? () => setState(() => _currentTabIndex = purchaseIndex)
+                  : null,
             ),
           ),
           const _ShellTab(
@@ -241,6 +260,18 @@ class _AppShellState extends ConsumerState<AppShell> {
                 label: 'Invoices',
               ),
               screen: InvoicesHubScreen(),
+            ),
+          );
+        }
+        if (features.enablePurchase) {
+          tabs.add(
+            const _ShellTab(
+              navItem: FlexNavItem(
+                icon: Icons.shopping_bag_outlined,
+                activeIcon: Icons.shopping_bag,
+                label: 'Purchase',
+              ),
+              screen: PurchaseOrdersScreen(),
             ),
           );
         }
@@ -396,7 +427,9 @@ class _AppShellState extends ConsumerState<AppShell> {
                 label: 'Pipeline',
               ),
               screen: PipelineKanbanScreen(
-                onNewQuotation: () => _openNewQuotation(context),
+                onNewQuotation: features.enableSales
+                    ? () => _openNewQuotation(context)
+                    : null,
               ),
             ),
           );
@@ -413,16 +446,18 @@ class _AppShellState extends ConsumerState<AppShell> {
             ),
           );
         }
-        tabs.add(
-          const _ShellTab(
-            navItem: FlexNavItem(
-              icon: Icons.people_outline,
-              activeIcon: Icons.people,
-              label: 'Customers',
+        if (features.hasAnyCommerce) {
+          tabs.add(
+            const _ShellTab(
+              navItem: FlexNavItem(
+                icon: Icons.people_outline,
+                activeIcon: Icons.people,
+                label: 'Customers',
+              ),
+              screen: CustomerDirectoryScreen(),
             ),
-            screen: CustomerDirectoryScreen(),
-          ),
-        );
+          );
+        }
         tabs.add(
           _ShellTab(
             navItem: const FlexNavItem(
@@ -463,7 +498,7 @@ class _AppShellState extends ConsumerState<AppShell> {
             ),
           );
         }
-        if (features.enablePayments || features.enableInvoicing) {
+        if (features.enableInvoicing) {
           tabs.add(
             const _ShellTab(
               navItem: FlexNavItem(
@@ -474,6 +509,8 @@ class _AppShellState extends ConsumerState<AppShell> {
               screen: VendorBillsScreen(),
             ),
           );
+        }
+        if (features.enablePayments) {
           tabs.add(
             const _ShellTab(
               navItem: FlexNavItem(

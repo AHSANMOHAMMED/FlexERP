@@ -34,6 +34,7 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
     bool enableInvoicing = true;
     bool enablePayments = true;
     bool enableWarehouse = false;
+    bool enablePurchase = false;
     bool enableHr = false;
     bool enableWebsite = false;
     bool enableExecutive = false;
@@ -155,11 +156,27 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
                           ),
                           const Divider(height: 1),
                           SwitchListTile(
-                            title: const Text('Sales CRM & B2B Quotations', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                            subtitle: const Text('Pipeline, wholesale leads, and quotations', style: TextStyle(fontSize: 11, color: FlexColors.textSecondaryDark)),
+                            title: const Text('Sales / B2B Quotations', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                            subtitle: const Text('Quotations and confirmed sales orders', style: TextStyle(fontSize: 11, color: FlexColors.textSecondaryDark)),
                             value: enableSales,
                             activeColor: FlexColors.primaryLight,
                             onChanged: (v) => setModalState(() => enableSales = v),
+                          ),
+                          const Divider(height: 1),
+                          SwitchListTile(
+                            title: const Text('CRM Pipeline', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                            subtitle: const Text('Leads and opportunity stages (independent of Sales)', style: TextStyle(fontSize: 11, color: FlexColors.textSecondaryDark)),
+                            value: enableCrm,
+                            activeColor: FlexColors.primaryLight,
+                            onChanged: (v) => setModalState(() => enableCrm = v),
+                          ),
+                          const Divider(height: 1),
+                          SwitchListTile(
+                            title: const Text('Purchase Orders', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                            subtitle: const Text('Vendor POs — independent of Inventory/HR', style: TextStyle(fontSize: 11, color: FlexColors.textSecondaryDark)),
+                            value: enablePurchase,
+                            activeColor: FlexColors.primaryLight,
+                            onChanged: (v) => setModalState(() => enablePurchase = v),
                           ),
                           const Divider(height: 1),
                           SwitchListTile(
@@ -172,7 +189,7 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
                           const Divider(height: 1),
                           SwitchListTile(
                             title: const Text('HR, Staff Attendance & Leaves', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                            subtitle: const Text('Cashier shifts and employee rosters', style: TextStyle(fontSize: 11, color: FlexColors.textSecondaryDark)),
+                            subtitle: const Text('Independent of CRM — attendance and leave only', style: TextStyle(fontSize: 11, color: FlexColors.textSecondaryDark)),
                             value: enableHr,
                             activeColor: FlexColors.primaryLight,
                             onChanged: (v) => setModalState(() => enableHr = v),
@@ -218,6 +235,7 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
                             enableInvoicing: enableInvoicing,
                             enablePayments: enablePayments,
                             enableWarehouse: enableWarehouse,
+                            enablePurchase: enablePurchase,
                             enableHr: enableHr,
                             enableWebsite: enableWebsite,
                             enableExecutive: enableExecutive,
@@ -327,6 +345,8 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
                         (v) => features = features.copyWith(enablePayments: v)),
                     toggle('Warehouse Pickings', features.enableWarehouse,
                         (v) => features = features.copyWith(enableWarehouse: v)),
+                    toggle('Purchase Orders', features.enablePurchase,
+                        (v) => features = features.copyWith(enablePurchase: v)),
                     toggle('HR Self-Service', features.enableHr,
                         (v) => features = features.copyWith(enableHr: v)),
                     toggle('Website / Shop API', features.enableWebsite,
@@ -524,7 +544,9 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
                       children: [
                         _FeatureBadge(label: 'POS', enabled: f.enablePos),
                         _FeatureBadge(label: 'Inventory', enabled: f.enableInventory),
-                        _FeatureBadge(label: 'Sales/CRM', enabled: f.enableSales),
+                        _FeatureBadge(label: 'Sales', enabled: f.enableSales),
+                        _FeatureBadge(label: 'CRM', enabled: f.enableCrm),
+                        _FeatureBadge(label: 'Purchase', enabled: f.enablePurchase),
                         _FeatureBadge(label: 'Invoicing', enabled: f.enableInvoicing),
                         _FeatureBadge(label: 'HR', enabled: f.enableHr),
                       ],

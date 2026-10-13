@@ -47,6 +47,27 @@ class FlexerpMobileApi(models.AbstractModel):
         return features
 
     @api.model
+    def _require_odoo_model(self, model_name, label=None):
+        """Soft-optional apps: fail clearly when module is not installed."""
+        if model_name not in self.env:
+            raise UserError(
+                f'{label or model_name} module is not installed on this database.'
+            )
+
+    @api.model
+    def _require_any_commerce(self, company=None):
+        """Partners/products only when at least one commerce feature is on."""
+        company = self._require_company_access(company=company or self.env.company)
+        features = self.env['flexerp.feature.flag'].get_mobile_features(company.id)
+        commerce_keys = ('pos', 'sales', 'crm', 'inventory', 'purchase')
+        if not any(features.get(k) for k in commerce_keys):
+            raise AccessError(
+                'No commerce feature is enabled for this vendor '
+                '(POS, Sales, CRM, Inventory, or Purchase).'
+            )
+        return features
+
+    @api.model
     def _with_slot(self, company=None):
         company = self._require_company_access(company=company or self.env.company)
         return self.with_company(company).with_context(
@@ -75,15 +96,11 @@ class FlexerpMobileApi(models.AbstractModel):
     @api.model
     def _group_xmlids(self, user=None):
         user = user or self.env.user
-        xmlids = []
-        for group in user.groups_id:
-            data = self.env['ir.model.data'].sudo().search([
-                ('model', '=', 'res.groups'),
-                ('res_id', '=', group.id),
-            ], limit=1)
-            if data:
-                xmlids.append(f'{data.module}.{data.name}')
-        return xmlids
+        data = self.env['ir.model.data'].sudo().search([
+            ('model', '=', 'res.groups'),
+            ('res_id', 'in', user.groups_id.ids),
+        ])
+        return [f'{rec.module}.{rec.name}' for rec in data]
 
     @api.model
     def _assert_record_company(self, record, company_field='company_id'):
@@ -194,12 +211,25 @@ class FlexerpMobileApi(models.AbstractModel):
         return self.env['flexerp.vendor.slot'].set_slot_user_active(user_id, active=active)
 
     @api.model
-    def list_approvals(self, limit=40):
-        """Pending activities visible to the current user / platform admin."""
-        domain = [('user_id', '=', self.env.uid), ('date_deadline', '!=', False)]
+    def list_approvals(self, limit=40, company_id=None):
+        """Pending activities scoped to the user or selected vendor companies."""
         if self._is_platform_admin():
-            domain = [('date_deadline', '!=', False)]
-        activities = self.env['mail.activity'].sudo().search(domain, limit=limit, order='date_deadline asc')
+            company_ids = (
+                [int(company_id)] if company_id
+                else self.env.user.company_ids.ids
+            )
+            domain = [
+                ('date_deadline', '!=', False),
+                ('user_id.company_id', 'in', company_ids),
+            ]
+        else:
+            domain = [
+                ('user_id', '=', self.env.uid),
+                ('date_deadline', '!=', False),
+            ]
+        activities = self.env['mail.activity'].sudo().search(
+            domain, limit=limit, order='date_deadline asc',
+        )
         return [{
             'id': a.id,
             'summary': a.summary or a.activity_type_id.name,
@@ -264,18 +294,24 @@ class FlexerpMobileApi(models.AbstractModel):
             ('available_in_pos', '=', True),
             '|', ('company_id', '=', False), ('company_id', '=', api.env.company.id),
         ]
-        products = api.env['product.product'].search(domain, limit=limit)
+        Product = api.env['product.product'].with_company(api.env.company)
+        products = Product.search(domain, limit=limit)
+        vendor_id = api.env.company.flexerp_vendor_code or f'VND-{api.env.company.id:03d}'
+        rows = products.read([
+            'display_name', 'barcode', 'default_code', 'lst_price',
+            'standard_price', 'qty_available', 'categ_id',
+        ])
         return [{
-            'id': product.id,
-            'name': product.display_name,
-            'barcode': product.barcode or '',
-            'sku': product.default_code or '',
-            'category': product.categ_id.display_name if product.categ_id else '',
-            'selling_price': product.lst_price,
-            'cost_price': product.standard_price,
-            'stock_on_hand': product.with_company(api.env.company).qty_available,
-            'vendor_id': api.env.company.flexerp_vendor_code or f'VND-{api.env.company.id:03d}',
-        } for product in products]
+            'id': row['id'],
+            'name': row['display_name'],
+            'barcode': row['barcode'] or '',
+            'sku': row['default_code'] or '',
+            'category': row['categ_id'][1] if row['categ_id'] else '',
+            'selling_price': row['lst_price'],
+            'cost_price': row['standard_price'],
+            'stock_on_hand': row['qty_available'],
+            'vendor_id': vendor_id,
+        } for row in rows]
 
     @api.model
     def pos_push_order(self, payload):
@@ -720,6 +756,217 @@ class FlexerpMobileApi(models.AbstractModel):
         return result
 
     # ------------------------------------------------------------------
+    # Partners / Products / POS history / Purchase / CRM stages / Leave types
+    # ------------------------------------------------------------------
+    @api.model
+    def partners_list(self, limit=80, search=None, partner_type='customer'):
+        api = self._with_slot()
+        api._require_any_commerce()
+        domain = ['|', ('company_id', '=', False), ('company_id', '=', api.env.company.id)]
+        if partner_type == 'supplier':
+            domain.append(('supplier_rank', '>', 0))
+        elif partner_type == 'customer':
+            domain.append(('customer_rank', '>', 0))
+        if search:
+            domain = ['&'] + domain + ['|', '|',
+                ('name', 'ilike', search),
+                ('phone', 'ilike', search),
+                ('email', 'ilike', search),
+            ]
+        partners = api.env['res.partner'].search(domain, limit=int(limit or 80))
+        return [{
+            'id': p.id,
+            'name': p.name,
+            'email': p.email or '',
+            'phone': p.phone or p.mobile or '',
+            'city': p.city or '',
+            'street': p.street or '',
+            'vat': p.vat or '',
+            'credit_limit': getattr(p, 'credit_limit', 0.0) or 0.0,
+            'credit': getattr(p, 'credit', 0.0) or 0.0,
+            'customer_rank': p.customer_rank,
+            'supplier_rank': p.supplier_rank,
+        } for p in partners]
+
+    @api.model
+    def partners_create(self, vals):
+        api = self._with_slot()
+        api._require_any_commerce()
+        vals = dict(vals or {})
+        partner = api.env['res.partner'].create({
+            'name': vals.get('name') or 'Partner',
+            'email': vals.get('email') or False,
+            'phone': vals.get('phone') or False,
+            'city': vals.get('city') or False,
+            'street': vals.get('street') or False,
+            'vat': vals.get('vat') or False,
+            'customer_rank': int(vals.get('customer_rank') or 1),
+            'supplier_rank': int(vals.get('supplier_rank') or 0),
+            'company_id': api.env.company.id,
+        })
+        return {
+            'id': partner.id,
+            'name': partner.name,
+            'email': partner.email or '',
+            'phone': partner.phone or '',
+        }
+
+    @api.model
+    def products_list(self, limit=200, search=None, category_id=None):
+        api = self._with_slot()
+        api._require_any_commerce()
+        domain = [('sale_ok', '=', True), '|', ('company_id', '=', False), ('company_id', '=', api.env.company.id)]
+        if search:
+            domain = ['&'] + domain + ['|', '|',
+                ('name', 'ilike', search),
+                ('default_code', 'ilike', search),
+                ('barcode', 'ilike', search),
+            ]
+        if category_id:
+            domain.append(('categ_id', 'child_of', int(category_id)))
+        Product = api.env['product.product'].with_company(api.env.company)
+        products = Product.search(domain, limit=int(limit or 200))
+        rows = products.read([
+            'display_name', 'default_code', 'barcode', 'lst_price', 'standard_price',
+            'qty_available', 'categ_id', 'uom_id', 'type',
+        ])
+        return [{
+            'id': row['id'],
+            'name': row['display_name'],
+            'default_code': row['default_code'] or '',
+            'barcode': row['barcode'] or '',
+            'list_price': row['lst_price'],
+            'standard_price': row['standard_price'],
+            'qty_available': row['qty_available'],
+            'categ_id': row['categ_id'][0] if row['categ_id'] else False,
+            'categ_name': row['categ_id'][1] if row['categ_id'] else '',
+            'uom': row['uom_id'][1] if row['uom_id'] else '',
+            'type': row['type'],
+        } for row in rows]
+
+    @api.model
+    def product_categories(self, limit=80):
+        api = self._with_slot()
+        api._require_any_commerce()
+        cats = api.env['product.category'].search([], limit=int(limit or 80))
+        return [{'id': c.id, 'name': c.complete_name or c.name} for c in cats]
+
+    @api.model
+    def pos_list_orders(self, limit=40):
+        api = self._with_slot()
+        api._require_feature('pos')
+        orders = api.env['pos.order'].search(
+            [('company_id', '=', api.env.company.id)],
+            limit=int(limit or 40),
+            order='date_order desc',
+        )
+        return [{
+            'id': o.id,
+            'name': o.name or o.pos_reference,
+            'pos_reference': o.pos_reference or o.name,
+            'partner_name': o.partner_id.display_name if o.partner_id else 'Walk-in',
+            'amount_total': o.amount_total,
+            'state': o.state,
+            'date_order': fields.Datetime.to_string(o.date_order) if o.date_order else None,
+            'payment_method': o.payment_ids[:1].payment_method_id.name if o.payment_ids else '',
+        } for o in orders]
+
+    @api.model
+    def purchase_list_orders(self, limit=50):
+        api = self._with_slot()
+        api._require_feature('purchase')
+        api._require_odoo_model('purchase.order', 'Purchase')
+        orders = api.env['purchase.order'].search(
+            [('company_id', '=', api.env.company.id)],
+            limit=int(limit or 50),
+            order='date_order desc',
+        )
+        return [{
+            'id': o.id,
+            'name': o.name,
+            'partner_name': o.partner_id.display_name,
+            'amount_total': o.amount_total,
+            'state': o.state,
+            'date_order': fields.Datetime.to_string(o.date_order) if o.date_order else None,
+        } for o in orders]
+
+    @api.model
+    def purchase_create_order(self, partner_id, lines, confirm=False):
+        api = self._with_slot()
+        api._require_feature('purchase')
+        api._require_odoo_model('purchase.order', 'Purchase')
+        order_lines = []
+        for line in lines or []:
+            order_lines.append((0, 0, {
+                'product_id': int(line['product_id']),
+                'product_qty': float(line.get('qty') or 1.0),
+                'price_unit': float(line.get('price_unit') or 0.0),
+                'name': line.get('name') or 'Line',
+            }))
+        order = api.env['purchase.order'].create({
+            'partner_id': int(partner_id),
+            'company_id': api.env.company.id,
+            'order_line': order_lines,
+        })
+        if confirm and hasattr(order, 'button_confirm'):
+            order.button_confirm()
+        api.env['flexerp.live.event'].emit(api.env.company.id, 'stock', {
+            'source': 'purchase',
+            'order_id': order.id,
+        })
+        return {'id': order.id, 'name': order.name, 'state': order.state, 'amount_total': order.amount_total}
+
+    @api.model
+    def crm_list_stages(self):
+        api = self._with_slot()
+        api._require_feature('crm')
+        api._require_odoo_model('crm.stage', 'CRM')
+        stages = api.env['crm.stage'].search([], order='sequence, id')
+        return [{'id': s.id, 'name': s.name, 'sequence': s.sequence} for s in stages]
+
+    @api.model
+    def hr_leave_types(self):
+        api = self._with_slot()
+        api._require_feature('hr')
+        api._require_odoo_model('hr.leave.type', 'Time Off')
+        types = api.env['hr.leave.type'].search([('active', '=', True)])
+        return [{'id': t.id, 'name': t.name} for t in types]
+
+    @api.model
+    def sales_order_detail(self, order_id):
+        api = self._with_slot()
+        api._require_feature('sales')
+        order = api.env['sale.order'].browse(int(order_id))
+        api._assert_record_company(order)
+        return {
+            'id': order.id,
+            'name': order.name,
+            'partner_id': order.partner_id.id,
+            'partner_name': order.partner_id.display_name,
+            'amount_total': order.amount_total,
+            'state': order.state,
+            'date_order': fields.Datetime.to_string(order.date_order) if order.date_order else None,
+            'lines': [{
+                'id': line.id,
+                'product_id': line.product_id.id,
+                'name': line.name,
+                'qty': line.product_uom_qty,
+                'price_unit': line.price_unit,
+                'price_subtotal': line.price_subtotal,
+            } for line in order.order_line],
+        }
+
+    @api.model
+    def stock_list_locations(self, limit=40):
+        api = self._with_slot()
+        api._require_feature('inventory')
+        locs = api.env['stock.location'].search([
+            ('usage', '=', 'internal'),
+            '|', ('company_id', '=', False), ('company_id', '=', api.env.company.id),
+        ], limit=int(limit or 40))
+        return [{'id': l.id, 'name': l.complete_name} for l in locs]
+
+    # ------------------------------------------------------------------
     # Sales / CRM
     # ------------------------------------------------------------------
     @api.model
@@ -733,6 +980,7 @@ class FlexerpMobileApi(models.AbstractModel):
             'id': o.id,
             'name': o.name,
             'partner_name': o.partner_id.display_name,
+            'partner_id': o.partner_id.id,
             'amount_total': o.amount_total,
             'state': o.state,
             'date_order': fields.Datetime.to_string(o.date_order) if o.date_order else None,
@@ -773,6 +1021,7 @@ class FlexerpMobileApi(models.AbstractModel):
     def crm_list_leads(self, limit=50):
         api = self._with_slot()
         api._require_feature('crm')
+        api._require_odoo_model('crm.lead', 'CRM')
         leads = api.env['crm.lead'].search(
             [('company_id', 'in', [False, api.env.company.id])], limit=limit,
         )
@@ -792,6 +1041,7 @@ class FlexerpMobileApi(models.AbstractModel):
     def crm_create_lead(self, name, expected_revenue=0.0, phone=None, email=None):
         api = self._with_slot()
         api._require_feature('crm')
+        api._require_odoo_model('crm.lead', 'CRM')
         lead = api.env['crm.lead'].create({
             'name': name,
             'expected_revenue': expected_revenue,
@@ -805,6 +1055,7 @@ class FlexerpMobileApi(models.AbstractModel):
     def crm_set_stage(self, lead_id, stage_id):
         api = self._with_slot()
         api._require_feature('crm')
+        api._require_odoo_model('crm.lead', 'CRM')
         lead = api.env['crm.lead'].browse(int(lead_id))
         if lead.company_id:
             api._assert_record_company(lead)
@@ -882,6 +1133,7 @@ class FlexerpMobileApi(models.AbstractModel):
     def hr_list_employees(self, limit=50):
         api = self._with_slot()
         api._require_feature('hr')
+        api._require_odoo_model('hr.employee', 'HR')
         employees = api.env['hr.employee'].search([
             '|', ('company_id', '=', False), ('company_id', '=', api.env.company.id),
         ], limit=limit)
@@ -898,7 +1150,17 @@ class FlexerpMobileApi(models.AbstractModel):
     def hr_list_leaves(self, limit=50):
         api = self._with_slot()
         api._require_feature('hr')
-        leaves = api.env['hr.leave'].search([], limit=limit, order='date_from desc')
+        api._require_odoo_model('hr.leave', 'Time Off')
+        domain = [
+            '|',
+            ('employee_id.company_id', '=', False),
+            ('employee_id.company_id', '=', api.env.company.id),
+        ]
+        if 'company_id' in api.env['hr.leave']._fields:
+            domain = [
+                '|', ('company_id', '=', False), ('company_id', '=', api.env.company.id),
+            ]
+        leaves = api.env['hr.leave'].search(domain, limit=limit, order='date_from desc')
         return [{
             'id': leave.id,
             'employee': leave.employee_id.name,
@@ -912,6 +1174,7 @@ class FlexerpMobileApi(models.AbstractModel):
     def hr_submit_leave(self, holiday_status_id, date_from, date_to, name=None):
         api = self._with_slot()
         api._require_feature('hr')
+        api._require_odoo_model('hr.leave', 'Time Off')
         employee = api.env['hr.employee'].search([('user_id', '=', api.env.uid)], limit=1)
         if not employee:
             raise UserError('No employee linked to this user.')
@@ -930,6 +1193,7 @@ class FlexerpMobileApi(models.AbstractModel):
     def hr_attendance_check(self, check_in=True, latitude=None, longitude=None):
         api = self._with_slot()
         api._require_feature('hr')
+        api._require_odoo_model('hr.attendance', 'Attendances')
         employee = api.env['hr.employee'].search([('user_id', '=', api.env.uid)], limit=1)
         if not employee:
             raise UserError('No employee linked to this user.')

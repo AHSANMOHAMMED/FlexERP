@@ -3,6 +3,7 @@
 from odoo import api, fields, models
 
 # Canonical keys consumed by flexerp_mobile + flexerp_mobile_api.
+# Each key is independently toggleable — no key requires another.
 FEATURE_KEYS = (
     'pos',
     'inventory',
@@ -11,6 +12,7 @@ FEATURE_KEYS = (
     'invoicing',
     'payments',
     'warehouse',
+    'purchase',
     'hr',
     'website',
     'executive',
@@ -25,6 +27,7 @@ PRESETS = {
         'invoicing': True,
         'payments': True,
         'warehouse': False,
+        'purchase': False,
         'hr': False,
         'website': False,
         'executive': False,
@@ -37,6 +40,7 @@ PRESETS = {
         'invoicing': True,
         'payments': True,
         'warehouse': True,
+        'purchase': True,
         'hr': True,
         'website': False,
         'executive': True,

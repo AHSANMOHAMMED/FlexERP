@@ -17,12 +17,14 @@ class VendorAdminHubScreen extends ConsumerStatefulWidget {
   final VoidCallback? onOpenStaff;
   final VoidCallback? onOpenStock;
   final VoidCallback? onOpenPos;
+  final VoidCallback? onOpenPurchase;
 
   const VendorAdminHubScreen({
     super.key,
     this.onOpenStaff,
     this.onOpenStock,
     this.onOpenPos,
+    this.onOpenPurchase,
   });
 
   @override
@@ -153,6 +155,13 @@ class _VendorAdminHubScreenState extends ConsumerState<VendorAdminHubScreen> {
               subtitle: 'Sessions and register activity',
               onTap: widget.onOpenPos,
             ),
+          if (features.enablePurchase)
+            _ActionTile(
+              icon: Icons.shopping_bag_outlined,
+              title: 'Purchase orders',
+              subtitle: 'Vendor POs (independent module)',
+              onTap: widget.onOpenPurchase,
+            ),
           const SizedBox(height: 20),
           Text('Enabled modules (view)', style: FlexTypography.headlineMd),
           const SizedBox(height: 10),
@@ -164,6 +173,7 @@ class _VendorAdminHubScreenState extends ConsumerState<VendorAdminHubScreen> {
               _FeatureChip('Inventory', features.enableInventory),
               _FeatureChip('Sales', features.enableSales),
               _FeatureChip('CRM', features.enableCrm),
+              _FeatureChip('Purchase', features.enablePurchase),
               _FeatureChip('Invoicing', features.enableInvoicing),
               _FeatureChip('Website', features.enableWebsite),
               _FeatureChip('HR', features.enableHr),

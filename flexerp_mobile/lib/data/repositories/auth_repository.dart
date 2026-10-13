@@ -105,7 +105,7 @@ final flexerpApiProvider = Provider<FlexerpMobileApi?>((ref) {
 
 final vendorFeaturesFromAuthProvider = Provider<VendorFeatures>((ref) {
   final user = ref.watch(currentUserProvider);
-  return user?.features ?? const VendorFeatures();
+  return user?.features ?? VendorFeatures.none;
 });
 
 UserRole mapRoleFromGroups(List<String> groups, {bool isAdmin = false, bool isSystem = false}) {

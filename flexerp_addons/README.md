@@ -42,19 +42,28 @@ Do not create one database per cashier or per vendor for the default product pat
 - Vendor Admin / Cashier: `company_ids` = their slot only; mobile RPC sets `allowed_company_ids` and rejects cross-slot IDs.
 - Platform Super Admin: sees all slots, provisions users, toggles features, ops console.
 
-## Commerce APIs (cashier phase)
+## Mobile API map (Odoo → app)
 
-| Route | Purpose |
-|-------|---------|
-| `/flexerp/mobile/pos/order` | Push sale (+ optional invoice) |
-| `/flexerp/mobile/pos/order/receipt` | Receipt payload |
-| `/flexerp/mobile/accounting/invoice/detail` | Invoice lines |
-| `/flexerp/mobile/accounting/invoice/create_from_pos` | Tax invoice from POS |
-| `/flexerp/mobile/invoice/pdf` | Branded PDF (base64) |
-| `/flexerp/mobile/invoice/whatsapp/send` | WhatsApp or `wa.me` fallback |
-| `/flexerp/mobile/live/poll` | Live stock/sales events |
-| `/flexerp/mobile/payment/link/create` | LankaQR/JustPay pay link |
-| `/flexerp/mobile/payment/link/status` | Pay link status |
+All routes are JSON-RPC under `/flexerp/mobile/*`, company-slot scoped, feature-gated where noted.
+
+| Area | Routes |
+|------|--------|
+| Auth / tenancy | `bootstrap`, `company/switch` |
+| Admin | `admin/tenants`, `tenant/features`, `tenant/provision`, `users`, `approvals` |
+| POS | `pos/configs`, `session/open\|close`, `products`, `order`, `order/receipt`, `orders` |
+| Partners / catalog | `partners`, `partners/create`, `products`, `products/categories` |
+| Sales / CRM | `sales/orders`, `sales/order/create\|confirm\|detail`, `crm/leads`, `crm/lead/create\|stage`, `crm/stages` |
+| Purchase | `purchase/orders`, `purchase/order/create` (feature `purchase`; soft-optional Odoo `purchase` app) |
+| Stock | `stock/barcode`, `quants`, `pickings`, `picking`, `validate`, `adjust`, `locations` |
+| Accounting | `accounting/invoices`, `invoice/detail`, `journals`, `payment/register`, `invoice/pdf`, WhatsApp send |
+| Payments | `payment/link/create`, `payment/link/status` |
+| HR | `hr/employees`, `leaves`, `leave/types`, `leave/submit`, `attendance` |
+| Ops / live | `ops/*`, `live/poll`, `executive/kpis` |
+| Website | via `flexerp_website_mobile`: `shop/catalog`, `cart`, `cart/add\|update`, `checkout` |
+
+Live path rule in the Flutter app: when `!isDemo`, repositories call these facades only (no silent mock success).
+
+**Feature independence:** each key in `flexerp.feature.flag` (pos, inventory, sales, crm, invoicing, payments, warehouse, purchase, hr, website, executive) is independently toggleable per vendor company. No feature requires another. Soft-optional Odoo apps (`purchase`, `crm`, `hr*`) return a clear error when not installed.
 
 ### WhatsApp parameters
 
@@ -71,9 +80,12 @@ Until configured → `status: not_configured` + `wa_me_url` fallback.
 | Parameter | Notes |
 |-----------|-------|
 | `flexerp.payment.provider` | `lankaqr_stub` / `justpay` / `lankaqr` |
-| `flexerp.payment.endpoint` | Gateway base URL (empty = stub links) |
+| `flexerp.payment.endpoint` | Gateway base URL |
 | `flexerp.payment.merchant_id` | Merchant id |
 | `flexerp.payment.secret` | Server-side only |
+
+- Empty endpoint + `lankaqr_stub` (default) → `ok: true`, `mode: stub` (demo-safe local links).
+- Empty endpoint + `justpay` / `lankaqr` → `status: not_configured`.
 
 ### Invoice branding
 
@@ -88,19 +100,19 @@ Until configured → `status: not_configured` + `wa_me_url` fallback.
 | `flexerp.ops.provider_type` | `docker` or `cloud` |
 | `flexerp.ops.endpoint` | `https://ops-agent.example.com` |
 | `flexerp.ops.token` | agent token |
-| `flexerp.ops.workers` | Odoo worker count |
-| `flexerp.ops.db_maxconn` | Odoo `db_maxconn` |
+| `flexerp.ops.workers` | Telemetry mirror of process `workers` (not the source of truth) |
+| `flexerp.ops.db_maxconn` | Telemetry mirror of process `db_maxconn` |
 
 Until the endpoint is set, `/flexerp/mobile/ops/*` returns `status: not_configured`.
 
 ## Connection checklist (deploy later)
 
-1. **Odoo workers** — set `workers` > 0 for production.
-2. **`db_maxconn`** — keep below Postgres `max_connections`.
+1. **Odoo workers** — set `workers` > 0 in [`odoo.conf.example`](odoo.conf.example) / real conf (process source of truth).
+2. **`db_maxconn`** — keep below Postgres `max_connections`; mirror into ICP only for ops UI.
 3. **PgBouncer** — transaction pooling in front of Postgres.
-4. **Reverse proxy / LB** — TLS + forward to Odoo HTTP.
+4. **Reverse proxy / LB** — TLS + `proxy_mode = True`.
 5. **Ops agent** — Docker/Cloud wake-restart endpoint.
-6. **WhatsApp / pay gateway** — set tokens/endpoints when ready.
+6. **WhatsApp / pay gateway** — set tokens/endpoints when ready; stub pay links are explicit `mode: stub`.
 
 ## Desktop app (Vendor Admin / Cashier)
 

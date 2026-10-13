@@ -229,36 +229,21 @@ class PosOrdersHistoryNotifier extends Notifier<List<PosPastOrder>> {
 
   Future<void> syncFromOdoo() async {
     final user = ref.read(currentUserProvider);
-    final client = ref.read(odooClientProvider);
-    if (user == null || user.isDemo) return;
-    if (client == null || !client.isAuthenticated) {
-      throw OdooException('Not authenticated for POS history sync');
-    }
+    final api = ref.read(flexerpApiProvider);
+    if (user == null || user.isDemo || api == null) return;
 
-    final results = await client.searchRead(
-      model: 'pos.order',
-      fields: [
-        'id',
-        'pos_reference',
-        'partner_id',
-        'amount_total',
-        'date_order',
-        'state',
-      ],
-      limit: 40,
-    );
-
+    final results = await api.posOrders();
     state = results.map((item) {
-      final partner =
-          item['partner_id'] is List ? item['partner_id'] as List : [0, 'Walk-in Customer'];
       final dateStr = item['date_order']?.toString();
       return PosPastOrder(
         id: (item['id'] as num?)?.toInt() ?? 0,
-        receiptNumber: item['pos_reference']?.toString() ?? 'POS/RECEIPT',
+        receiptNumber: item['pos_reference']?.toString() ?? item['name']?.toString() ?? 'POS/RECEIPT',
         orderDate: dateStr != null ? DateTime.tryParse(dateStr) ?? DateTime.now() : DateTime.now(),
-        customerName: partner.length > 1 ? partner[1].toString() : 'Walk-in Customer',
+        customerName: item['partner_name']?.toString() ?? 'Walk-in Customer',
         totalAmount: (item['amount_total'] as num?)?.toDouble() ?? 0.0,
-        paymentMethod: 'LANKAQR / Cash',
+        paymentMethod: item['payment_method']?.toString().isNotEmpty == true
+            ? item['payment_method'].toString()
+            : 'Cash',
         status: item['state']?.toString() ?? 'paid',
       );
     }).toList();

@@ -5,4 +5,17 @@ db_port = False
 db_user = odoo
 db_password = False
 addons_path = addons,odoo/addons,flexerp_addons
+http_port = 8069
 xmlrpc_port = 8069
+
+; --- Multi-user production (set these on the Odoo process — source of truth) ---
+; ICP params flexerp.ops.workers / flexerp.ops.db_maxconn are telemetry mirrors only.
+workers = 4
+db_maxconn = 64
+limit_memory_soft = 2147483648
+limit_memory_hard = 2684354560
+limit_request = 8192
+limit_time_cpu = 120
+limit_time_real = 240
+proxy_mode = True
+; max_cron_threads = 1

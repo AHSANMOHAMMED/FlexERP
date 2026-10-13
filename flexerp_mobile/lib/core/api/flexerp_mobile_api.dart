@@ -148,10 +148,14 @@ class FlexerpMobileApi {
   }
 
   Future<List<Map<String, dynamic>>> posProducts({int? configId, int limit = 500}) async {
-    final res = await client.callRoute('/flexerp/mobile/pos/products', {
-      if (configId != null) 'config_id': configId,
-      'limit': limit,
-    });
+    final res = await client.callRoute(
+      '/flexerp/mobile/pos/products',
+      {
+        if (configId != null) 'config_id': configId,
+        'limit': limit,
+      },
+      'pos/products:${configId ?? 0}:$limit',
+    );
     if (res is List) {
       return res.map((e) => Map<String, dynamic>.from(e as Map)).toList();
     }
@@ -168,6 +172,121 @@ class FlexerpMobileApi {
       'order_id': orderId,
     });
     return Map<String, dynamic>.from(res as Map);
+  }
+
+  Future<List<Map<String, dynamic>>> posOrders({int limit = 40}) async {
+    final res = await client.callRoute('/flexerp/mobile/pos/orders', {'limit': limit});
+    if (res is List) {
+      return res.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+    return [];
+  }
+
+  // ---- Partners / catalog / purchase ----
+  Future<List<Map<String, dynamic>>> partners({
+    int limit = 80,
+    String? search,
+    String partnerType = 'customer',
+  }) async {
+    final res = await client.callRoute(
+      '/flexerp/mobile/partners',
+      {
+        'limit': limit,
+        if (search != null) 'search': search,
+        'partner_type': partnerType,
+      },
+      search == null || search.isEmpty ? 'partners:$partnerType:$limit' : null,
+    );
+    if (res is List) {
+      return res.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+    return [];
+  }
+
+  Future<Map<String, dynamic>> partnerCreate(Map<String, dynamic> vals) async {
+    client.invalidateCachePrefix('partners');
+    final res = await client.callRoute('/flexerp/mobile/partners/create', vals);
+    return Map<String, dynamic>.from(res as Map);
+  }
+
+  Future<List<Map<String, dynamic>>> products({
+    int limit = 200,
+    String? search,
+    int? categoryId,
+  }) async {
+    final res = await client.callRoute(
+      '/flexerp/mobile/products',
+      {
+        'limit': limit,
+        if (search != null) 'search': search,
+        if (categoryId != null) 'category_id': categoryId,
+      },
+      (search == null || search.isEmpty) && categoryId == null ? 'products:$limit' : null,
+    );
+    if (res is List) {
+      return res.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+    return [];
+  }
+
+  Future<List<Map<String, dynamic>>> productCategories({int limit = 80}) async {
+    final res = await client.callRoute('/flexerp/mobile/products/categories', {'limit': limit});
+    if (res is List) {
+      return res.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+    return [];
+  }
+
+  Future<List<Map<String, dynamic>>> purchaseOrders({int limit = 50}) async {
+    final res = await client.callRoute('/flexerp/mobile/purchase/orders', {'limit': limit});
+    if (res is List) {
+      return res.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+    return [];
+  }
+
+  Future<Map<String, dynamic>> purchaseCreateOrder({
+    required int partnerId,
+    required List<Map<String, dynamic>> lines,
+    bool confirm = false,
+  }) async {
+    final res = await client.callRoute('/flexerp/mobile/purchase/order/create', {
+      'partner_id': partnerId,
+      'lines': lines,
+      'confirm': confirm,
+    });
+    return Map<String, dynamic>.from(res as Map);
+  }
+
+  Future<List<Map<String, dynamic>>> crmStages() async {
+    final res = await client.callRoute('/flexerp/mobile/crm/stages', {});
+    if (res is List) {
+      return res.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+    return [];
+  }
+
+  Future<List<Map<String, dynamic>>> hrLeaveTypes() async {
+    final res = await client.callRoute('/flexerp/mobile/hr/leave/types', {});
+    if (res is List) {
+      return res.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+    return [];
+  }
+
+  Future<Map<String, dynamic>> salesOrderDetail(int orderId) async {
+    final res = await client.callRoute('/flexerp/mobile/sales/order/detail', {
+      'order_id': orderId,
+    });
+    return Map<String, dynamic>.from(res as Map);
+  }
+
+  Future<List<Map<String, dynamic>>> stockLocations({int limit = 40}) async {
+    final res = await client.callRoute('/flexerp/mobile/stock/locations', {'limit': limit});
+    if (res is List) {
+      return res.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+    return [];
   }
 
   // ---- Stock ----

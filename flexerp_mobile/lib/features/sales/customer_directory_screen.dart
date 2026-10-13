@@ -16,6 +16,21 @@ class _CustomerDirectoryScreenState extends ConsumerState<CustomerDirectoryScree
   String _selectedCity = 'All';
 
   @override
+  void initState() {
+    super.initState();
+    Future.microtask(() async {
+      try {
+        await ref.read(partnersProvider.notifier).syncFromOdoo();
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Partner sync failed: $e'), backgroundColor: FlexColors.danger),
+        );
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();

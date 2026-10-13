@@ -48,8 +48,8 @@ class FlexerpMobileController(http.Controller):
         return self._api().set_tenant_user_active(user_id, active=active)
 
     @route('/flexerp/mobile/admin/approvals', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
-    def admin_approvals(self, limit=40, **kwargs):
-        return self._api().list_approvals(limit=limit)
+    def admin_approvals(self, limit=40, company_id=None, **kwargs):
+        return self._api().list_approvals(limit=limit, company_id=company_id)
 
     # POS
     @route('/flexerp/mobile/pos/configs', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
@@ -76,6 +76,51 @@ class FlexerpMobileController(http.Controller):
     @route('/flexerp/mobile/pos/order/receipt', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
     def pos_order_receipt(self, order_id=None, **kwargs):
         return self._api().pos_order_receipt(order_id)
+
+    @route('/flexerp/mobile/pos/orders', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
+    def pos_orders(self, limit=40, **kwargs):
+        return self._api().pos_list_orders(limit=limit)
+
+    # Partners / catalog
+    @route('/flexerp/mobile/partners', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
+    def partners(self, limit=80, search=None, partner_type='customer', **kwargs):
+        return self._api().partners_list(limit=limit, search=search, partner_type=partner_type)
+
+    @route('/flexerp/mobile/partners/create', type='jsonrpc', auth='user', methods=['POST'])
+    def partners_create(self, **vals):
+        return self._api().partners_create(vals)
+
+    @route('/flexerp/mobile/products', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
+    def products(self, limit=200, search=None, category_id=None, **kwargs):
+        return self._api().products_list(limit=limit, search=search, category_id=category_id)
+
+    @route('/flexerp/mobile/products/categories', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
+    def product_categories(self, limit=80, **kwargs):
+        return self._api().product_categories(limit=limit)
+
+    @route('/flexerp/mobile/purchase/orders', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
+    def purchase_orders(self, limit=50, **kwargs):
+        return self._api().purchase_list_orders(limit=limit)
+
+    @route('/flexerp/mobile/purchase/order/create', type='jsonrpc', auth='user', methods=['POST'])
+    def purchase_order_create(self, partner_id=None, lines=None, confirm=False, **kwargs):
+        return self._api().purchase_create_order(partner_id, lines or [], confirm=confirm)
+
+    @route('/flexerp/mobile/crm/stages', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
+    def crm_stages(self, **kwargs):
+        return self._api().crm_list_stages()
+
+    @route('/flexerp/mobile/hr/leave/types', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
+    def hr_leave_types(self, **kwargs):
+        return self._api().hr_leave_types()
+
+    @route('/flexerp/mobile/sales/order/detail', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
+    def sales_order_detail(self, order_id=None, **kwargs):
+        return self._api().sales_order_detail(order_id)
+
+    @route('/flexerp/mobile/stock/locations', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
+    def stock_locations(self, limit=40, **kwargs):
+        return self._api().stock_list_locations(limit=limit)
 
     # Stock
     @route('/flexerp/mobile/stock/barcode', type='jsonrpc', auth='user', readonly=True, methods=['POST'])

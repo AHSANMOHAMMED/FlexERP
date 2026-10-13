@@ -26,6 +26,12 @@ class _InvoicesHubScreenState extends ConsumerState<InvoicesHubScreen> {
   final List<String> _tabs = ['All', 'Unpaid', 'Overdue', 'Paid'];
 
   @override
+  void initState() {
+    super.initState();
+    Future.microtask(() => ref.read(invoicesProvider.notifier).syncFromOdoo());
+  }
+
+  @override
   Widget build(BuildContext context) {
     final currentBranch = ref.watch(currentBranchProvider);
     final allInvoices = ref.watch(invoicesProvider);

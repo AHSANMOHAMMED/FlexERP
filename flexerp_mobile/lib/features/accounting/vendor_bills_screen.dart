@@ -15,6 +15,12 @@ class _VendorBillsScreenState extends ConsumerState<VendorBillsScreen> {
   String _selectedFilter = 'All';
 
   @override
+  void initState() {
+    super.initState();
+    Future.microtask(() => ref.read(vendorBillsProvider.notifier).syncFromOdoo());
+  }
+
+  @override
   Widget build(BuildContext context) {
     final bills = ref.watch(vendorBillsProvider);
 

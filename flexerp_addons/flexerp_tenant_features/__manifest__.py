@@ -1,7 +1,7 @@
 # Part of FlexERP. See LICENSE file for full copyright and licensing details.
 {
     'name': 'FlexERP Tenant Features',
-    'version': '20.0.1.0.0',
+    'version': '20.0.1.1.0',
     'category': 'Hidden/Tools',
     'summary': 'Per-company mobile feature flags and vendor phase presets',
     'depends': ['base', 'web'],

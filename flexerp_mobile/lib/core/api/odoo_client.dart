@@ -13,6 +13,13 @@ class OdooException implements Exception {
   String toString() => 'OdooException: $message (code: $code)';
 }
 
+class _CacheEntry {
+  final dynamic value;
+  final DateTime expiresAt;
+  _CacheEntry(this.value, this.expiresAt);
+  bool get isFresh => DateTime.now().isBefore(expiresAt);
+}
+
 /// Robust JSON-RPC 2.0 client for Odoo 16/17/18/20 + FlexERP mobile facades.
 class OdooClient {
   String baseUrl;
@@ -21,6 +28,9 @@ class OdooClient {
   int? activeCompanyId;
   final Duration timeout;
   final int maxRetries;
+  final http.Client _http;
+  final Duration cacheTtl;
+  final Map<String, _CacheEntry> _cache = {};
 
   final Map<String, String> _headers = {
     'Content-Type': 'application/json',
@@ -34,7 +44,9 @@ class OdooClient {
     this.activeCompanyId,
     this.timeout = const Duration(seconds: 15),
     this.maxRetries = 2,
-  }) {
+    http.Client? httpClient,
+    this.cacheTtl = const Duration(seconds: 45),
+  }) : _http = httpClient ?? http.Client() {
     if (baseUrl.endsWith('/')) {
       baseUrl = baseUrl.substring(0, baseUrl.length - 1);
     }
@@ -42,6 +54,12 @@ class OdooClient {
       updateSession(sessionId!);
     }
   }
+
+  void invalidateCachePrefix(String prefix) {
+    _cache.removeWhere((key, _) => key.contains(prefix));
+  }
+
+  void clearCache() => _cache.clear();
 
   bool get isAuthenticated => sessionId != null && sessionId!.isNotEmpty;
 
@@ -88,7 +106,7 @@ class OdooClient {
     Object? lastError;
     for (var attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        final response = await http
+        final response = await _http
             .post(uri, headers: _headers, body: jsonEncode(payload))
             .timeout(timeout);
         if (response.statusCode >= 500 && attempt < maxRetries) {
@@ -238,7 +256,17 @@ class OdooClient {
   }
 
   /// Call a FlexERP / Odoo JSON-RPC controller route (e.g. /flexerp/mobile/bootstrap).
-  Future<dynamic> callRoute(String path, [Map<String, dynamic> params = const {}]) async {
+  ///
+  /// Pass [cacheKey] for short TTL caching of read-heavy list endpoints.
+  Future<dynamic> callRoute(
+    String path, [
+    Map<String, dynamic> params = const {},
+    String? cacheKey,
+  ]) async {
+    if (cacheKey != null) {
+      final hit = _cache[cacheKey];
+      if (hit != null && hit.isFresh) return hit.value;
+    }
     final normalized = path.startsWith('/') ? path : '/$path';
     final uri = Uri.parse('$baseUrl$normalized');
     final response = await _post(uri, {
@@ -247,7 +275,11 @@ class OdooClient {
       'params': params,
       'id': DateTime.now().millisecondsSinceEpoch,
     });
-    return _decodeResult(response);
+    final result = _decodeResult(response);
+    if (cacheKey != null) {
+      _cache[cacheKey] = _CacheEntry(result, DateTime.now().add(cacheTtl));
+    }
+    return result;
   }
 
   Future<dynamic> callKw({

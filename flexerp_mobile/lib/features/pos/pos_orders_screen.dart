@@ -16,6 +16,12 @@ class _PosOrdersScreenState extends ConsumerState<PosOrdersScreen> {
   final TextEditingController _searchController = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    Future.microtask(() => ref.read(posOrdersHistoryProvider.notifier).syncFromOdoo());
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();

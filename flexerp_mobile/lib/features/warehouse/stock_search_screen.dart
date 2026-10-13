@@ -16,6 +16,12 @@ class _StockSearchScreenState extends ConsumerState<StockSearchScreen> {
   String _selectedWarehouse = 'All';
 
   @override
+  void initState() {
+    super.initState();
+    Future.microtask(() => ref.read(stockQuantsProvider.notifier).syncFromOdoo());
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();

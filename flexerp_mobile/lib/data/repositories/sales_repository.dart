@@ -19,8 +19,16 @@ class CrmLeadsNotifier extends Notifier<List<CrmLead>> {
     final api = ref.read(flexerpApiProvider);
     if (user == null || user.isDemo || api == null) return;
     try {
-      final records = await api.crmLeads();
       _stageIds.clear();
+      try {
+        final stages = await api.crmStages();
+        for (final s in stages) {
+          final name = s['name']?.toString();
+          final id = s['id'];
+          if (name != null && id is int) _stageIds[name] = id;
+        }
+      } catch (_) {}
+      final records = await api.crmLeads();
       state = records.map((rec) {
         final stage = rec['stage']?.toString() ?? 'New';
         final stageId = rec['stage_id'];
@@ -140,23 +148,19 @@ class SaleOrdersNotifier extends Notifier<List<SaleOrder>> {
     } catch (_) {}
   }
 
-  Future<void> addOrder(SaleOrder order) async {
+  Future<void> addOrder(SaleOrder order, {int? partnerId}) async {
     state = [order, ...state];
     final user = ref.read(currentUserProvider);
     final api = ref.read(flexerpApiProvider);
-    final client = ref.read(authRepositoryProvider).activeClient;
-    if (user == null || user.isDemo || api == null || client == null) return;
+    if (user == null || user.isDemo || api == null) return;
 
-    final partners = await client.searchRead(
-      model: 'res.partner',
-      domain: [
-        ['name', 'ilike', order.partnerName]
-      ],
-      fields: ['id'],
-      limit: 1,
-    );
-    if (partners.isEmpty) return;
-    final partnerId = partners.first['id'] as int;
+    var resolvedPartnerId = partnerId;
+    if (resolvedPartnerId == null) {
+      final partners = await api.partners(search: order.partnerName, limit: 1);
+      if (partners.isEmpty) return;
+      resolvedPartnerId = partners.first['id'] as int?;
+    }
+    if (resolvedPartnerId == null) return;
     final lines = order.lines
         .map((line) => {
               'product_id': line.productId,
@@ -167,7 +171,7 @@ class SaleOrdersNotifier extends Notifier<List<SaleOrder>> {
         .toList();
     try {
       final created = await api.salesCreateOrder(
-        partnerId: partnerId,
+        partnerId: resolvedPartnerId,
         lines: lines,
         confirm: order.state == 'sale',
       );

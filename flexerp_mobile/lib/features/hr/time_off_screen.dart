@@ -14,6 +14,21 @@ class TimeOffScreen extends ConsumerStatefulWidget {
 
 class _TimeOffScreenState extends ConsumerState<TimeOffScreen> {
   @override
+  void initState() {
+    super.initState();
+    Future.microtask(() async {
+      try {
+        await ref.read(leaveRequestsProvider.notifier).syncFromOdoo();
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Leave sync failed: $e'), backgroundColor: FlexColors.danger),
+        );
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final leaveRequests = ref.watch(leaveRequestsProvider);
 

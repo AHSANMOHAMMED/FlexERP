@@ -159,14 +159,19 @@ class LeaveRequestsNotifier extends Notifier<List<LeaveRequest>> {
     } catch (_) {}
   }
 
-  Future<void> submitLeaveRequest(LeaveRequest request, {int holidayStatusId = 1}) async {
+  Future<void> submitLeaveRequest(LeaveRequest request, {int? holidayStatusId}) async {
     state = [request, ...state];
     final user = ref.read(currentUserProvider);
     final api = ref.read(flexerpApiProvider);
     if (user == null || user.isDemo || api == null) return;
     try {
+      var typeId = holidayStatusId;
+      if (typeId == null) {
+        final types = await api.hrLeaveTypes();
+        typeId = types.isNotEmpty ? types.first['id'] as int? : 1;
+      }
       final created = await api.hrSubmitLeave(
-        holidayStatusId: holidayStatusId,
+        holidayStatusId: typeId ?? 1,
         dateFrom: request.dateFrom.toIso8601String().split('T').first,
         dateTo: request.dateTo.toIso8601String().split('T').first,
         name: request.reason,

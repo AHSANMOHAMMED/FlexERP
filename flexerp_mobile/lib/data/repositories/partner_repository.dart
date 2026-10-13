@@ -11,45 +11,29 @@ class PartnersNotifier extends Notifier<List<CustomerPartner>> {
     return MockSriLankaDataService.mockPartners;
   }
 
-  Future<void> syncFromOdoo() async {
+  Future<void> syncFromOdoo({String partnerType = 'customer', String? search}) async {
     final user = ref.read(currentUserProvider);
-    final client = ref.read(odooClientProvider);
-    if (user == null || user.isDemo) return;
-    if (client == null || !client.isAuthenticated) {
-      throw Exception('Not authenticated');
-    }
+    final api = ref.read(flexerpApiProvider);
+    if (user == null || user.isDemo || api == null) return;
 
-    final results = await client.searchRead(
-      model: 'res.partner',
-      domain: [
-        ['customer_rank', '>', 0]
-      ],
-      fields: [
-        'id',
-        'name',
-        'email',
-        'phone',
-        'city',
-        'street',
-        'vat',
-        'credit_limit',
-        'credit',
-      ],
-      limit: 50,
+    final results = await api.partners(
+      partnerType: partnerType,
+      search: search,
     );
-
     state = results.map((item) {
       return CustomerPartner(
         id: (item['id'] as num?)?.toInt() ?? 0,
         name: item['name']?.toString() ?? 'Unnamed Partner',
-        email: item['email']?.toString() ?? 'No email',
-        phone: item['phone']?.toString() ?? 'No phone',
-        city: item['city']?.toString() ?? 'Sri Lanka',
-        address: item['street']?.toString() ?? 'Colombo, Sri Lanka',
-        vatOrTin: item['vat']?.toString() ?? 'N/A',
-        creditLimit: (item['credit_limit'] as num?)?.toDouble() ?? 1000000.0,
+        email: item['email']?.toString() ?? '',
+        phone: item['phone']?.toString() ?? '',
+        city: item['city']?.toString() ?? '',
+        address: item['street']?.toString() ?? '',
+        vatOrTin: item['vat']?.toString() ?? '',
+        creditLimit: (item['credit_limit'] as num?)?.toDouble() ?? 0.0,
         totalReceivable: (item['credit'] as num?)?.toDouble() ?? 0.0,
-        isCustomer: true,
+        isCustomer: (item['customer_rank'] as num?)?.toInt() != null
+            ? ((item['customer_rank'] as num).toInt() > 0)
+            : partnerType == 'customer',
       );
     }).toList();
   }
@@ -57,20 +41,18 @@ class PartnersNotifier extends Notifier<List<CustomerPartner>> {
   Future<void> addPartner(CustomerPartner partner) async {
     state = [partner, ...state];
     final user = ref.read(currentUserProvider);
-    final client = ref.read(odooClientProvider);
-    if (user == null || user.isDemo || client == null) return;
-    final id = await client.create(
-      model: 'res.partner',
-      values: {
-        'name': partner.name,
-        'email': partner.email,
-        'phone': partner.phone,
-        'city': partner.city,
-        'street': partner.address,
-        'vat': partner.vatOrTin,
-        'customer_rank': 1,
-      },
-    );
+    final api = ref.read(flexerpApiProvider);
+    if (user == null || user.isDemo || api == null) return;
+    final created = await api.partnerCreate({
+      'name': partner.name,
+      'email': partner.email,
+      'phone': partner.phone,
+      'city': partner.city,
+      'street': partner.address,
+      'vat': partner.vatOrTin,
+      'customer_rank': 1,
+    });
+    final id = (created['id'] as num?)?.toInt() ?? 0;
     if (id > 0) {
       state = [
         for (final p in state)

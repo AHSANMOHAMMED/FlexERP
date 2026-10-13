@@ -16,6 +16,21 @@ class _EmployeeDirectoryScreenState extends ConsumerState<EmployeeDirectoryScree
   String _selectedDept = 'All';
 
   @override
+  void initState() {
+    super.initState();
+    Future.microtask(() async {
+      try {
+        await ref.read(employeeDirectoryProvider.notifier).syncFromOdoo();
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('HR sync failed: $e'), backgroundColor: FlexColors.danger),
+        );
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();

@@ -26,6 +26,12 @@ class _PipelineKanbanScreenState extends ConsumerState<PipelineKanbanScreen> {
   String _searchQuery = '';
 
   @override
+  void initState() {
+    super.initState();
+    Future.microtask(() => ref.read(crmLeadsProvider.notifier).syncFromOdoo());
+  }
+
+  @override
   Widget build(BuildContext context) {
     final currentBranch = ref.watch(currentBranchProvider);
     final allLeads = ref.watch(crmLeadsProvider);

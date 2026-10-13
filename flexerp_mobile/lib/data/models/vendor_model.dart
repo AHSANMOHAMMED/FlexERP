@@ -8,24 +8,41 @@ class VendorFeatures {
   final bool enableInvoicing;
   final bool enablePayments;
   final bool enableWarehouse;
+  final bool enablePurchase;
   final bool enableHr;
   final bool enableWebsite;
   final bool enableExecutive;
 
+  /// Fail-closed: missing/unknown bootstrap must not unlock modules.
   const VendorFeatures({
-    this.enablePos = true,
-    this.enableInventory = true,
-    this.enableSales = true,
-    this.enableCrm = true,
-    this.enableInvoicing = true,
-    this.enablePayments = true,
-    this.enableWarehouse = true,
-    this.enableHr = true,
+    this.enablePos = false,
+    this.enableInventory = false,
+    this.enableSales = false,
+    this.enableCrm = false,
+    this.enableInvoicing = false,
+    this.enablePayments = false,
+    this.enableWarehouse = false,
+    this.enablePurchase = false,
+    this.enableHr = false,
     this.enableWebsite = false,
-    this.enableExecutive = true,
+    this.enableExecutive = false,
   });
 
-  static const allEnabled = VendorFeatures();
+  static const none = VendorFeatures();
+
+  static const allEnabled = VendorFeatures(
+    enablePos: true,
+    enableInventory: true,
+    enableSales: true,
+    enableCrm: true,
+    enableInvoicing: true,
+    enablePayments: true,
+    enableWarehouse: true,
+    enablePurchase: true,
+    enableHr: true,
+    enableWebsite: true,
+    enableExecutive: true,
+  );
 
   static const smallShop = VendorFeatures(
     enablePos: true,
@@ -35,6 +52,7 @@ class VendorFeatures {
     enableInvoicing: true,
     enablePayments: true,
     enableWarehouse: false,
+    enablePurchase: false,
     enableHr: false,
     enableWebsite: false,
     enableExecutive: false,
@@ -48,30 +66,32 @@ class VendorFeatures {
     enableInvoicing: true,
     enablePayments: true,
     enableWarehouse: true,
+    enablePurchase: true,
     enableHr: true,
     enableWebsite: false,
     enableExecutive: true,
   );
 
   factory VendorFeatures.fromApiMap(Map<String, dynamic>? map) {
-    if (map == null || map.isEmpty) return const VendorFeatures();
-    bool flag(String key, {bool fallback = false}) {
-      if (!map.containsKey(key)) return fallback;
+    if (map == null || map.isEmpty) return VendorFeatures.none;
+    bool flag(String key) {
+      if (!map.containsKey(key)) return false;
       final v = map[key];
       return v == true || v == 1;
     }
 
     return VendorFeatures(
-      enablePos: flag('pos', fallback: true),
-      enableInventory: flag('inventory', fallback: true),
-      enableSales: flag('sales', fallback: true),
-      enableCrm: flag('crm', fallback: true),
-      enableInvoicing: flag('invoicing', fallback: true),
-      enablePayments: flag('payments', fallback: true),
-      enableWarehouse: flag('warehouse', fallback: true),
-      enableHr: flag('hr', fallback: true),
+      enablePos: flag('pos'),
+      enableInventory: flag('inventory'),
+      enableSales: flag('sales'),
+      enableCrm: flag('crm'),
+      enableInvoicing: flag('invoicing'),
+      enablePayments: flag('payments'),
+      enableWarehouse: flag('warehouse'),
+      enablePurchase: flag('purchase'),
+      enableHr: flag('hr'),
       enableWebsite: flag('website'),
-      enableExecutive: flag('executive', fallback: true),
+      enableExecutive: flag('executive'),
     );
   }
 
@@ -83,6 +103,7 @@ class VendorFeatures {
         'invoicing': enableInvoicing,
         'payments': enablePayments,
         'warehouse': enableWarehouse,
+        'purchase': enablePurchase,
         'hr': enableHr,
         'website': enableWebsite,
         'executive': enableExecutive,
@@ -96,6 +117,7 @@ class VendorFeatures {
     bool? enableInvoicing,
     bool? enablePayments,
     bool? enableWarehouse,
+    bool? enablePurchase,
     bool? enableHr,
     bool? enableWebsite,
     bool? enableExecutive,
@@ -108,6 +130,7 @@ class VendorFeatures {
       enableInvoicing: enableInvoicing ?? this.enableInvoicing,
       enablePayments: enablePayments ?? this.enablePayments,
       enableWarehouse: enableWarehouse ?? this.enableWarehouse,
+      enablePurchase: enablePurchase ?? this.enablePurchase,
       enableHr: enableHr ?? this.enableHr,
       enableWebsite: enableWebsite ?? this.enableWebsite,
       enableExecutive: enableExecutive ?? this.enableExecutive,
@@ -115,6 +138,9 @@ class VendorFeatures {
   }
 
   int get activeCount => toApiMap().values.where((v) => v).length;
+
+  bool get hasAnyCommerce =>
+      enablePos || enableSales || enableCrm || enableInventory || enablePurchase;
 
   String get summary {
     final list = <String>[];
@@ -125,6 +151,7 @@ class VendorFeatures {
     if (enableInvoicing) list.add('Invoicing');
     if (enablePayments) list.add('Payments');
     if (enableWarehouse) list.add('Warehouse');
+    if (enablePurchase) list.add('Purchase');
     if (enableHr) list.add('HR');
     if (enableWebsite) list.add('Website');
     if (enableExecutive) list.add('Executive');
@@ -139,6 +166,7 @@ class VendorFeatures {
     'invoicing': 'Customer Invoices',
     'payments': 'Payment Registration',
     'warehouse': 'Warehouse Pickings',
+    'purchase': 'Purchase Orders',
     'hr': 'HR Self-Service',
     'website': 'Website / Shop API',
     'executive': 'Executive KPIs',

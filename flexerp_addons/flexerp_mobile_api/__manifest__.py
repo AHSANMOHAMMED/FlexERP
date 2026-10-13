@@ -1,9 +1,9 @@
 # Part of FlexERP. See LICENSE file for full copyright and licensing details.
 {
     'name': 'FlexERP Mobile API',
-    'version': '20.0.1.2.0',
+    'version': '20.0.1.4.0',
     'category': 'Hidden/Tools',
-    'summary': 'JSON-RPC facades for FlexERP mobile: bootstrap, POS, stock, payments, admin',
+    'summary': 'JSON-RPC facades for FlexERP mobile: bootstrap, POS, stock, sales, purchase, HR, payments, admin',
     'depends': [
         'flexerp_tenant_features',
         'flexerp_vendor_rbac',
@@ -14,13 +14,12 @@
         'stock',
         'account',
         'sale',
-        'crm',
-        'hr',
-        'hr_attendance',
-        'hr_holidays',
         'mail',
         'bus',
+        'product',
     ],
+    # Optional (soft): purchase, crm, hr, hr_attendance, hr_holidays —
+    # routes return module_not_installed when model registry lacks them.
     'data': [
         'security/ir.model.access.csv',
     ],

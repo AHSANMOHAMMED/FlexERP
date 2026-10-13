@@ -18,6 +18,12 @@ class _OperationsHubScreenState extends ConsumerState<OperationsHubScreen> {
   String _selectedType = 'All';
 
   @override
+  void initState() {
+    super.initState();
+    Future.microtask(() => ref.read(stockPickingsProvider.notifier).syncFromOdoo());
+  }
+
+  @override
   Widget build(BuildContext context) {
     final currentBranch = ref.watch(currentBranchProvider);
     final pickings = ref.watch(stockPickingsProvider);

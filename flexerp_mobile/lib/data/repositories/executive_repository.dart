@@ -19,13 +19,19 @@ class ExecutiveKpis {
 
 class ExecutiveKpisNotifier extends Notifier<ExecutiveKpis> {
   @override
-  ExecutiveKpis build() => const ExecutiveKpis(
-        todayRevenue: 4850000,
-        todayOrders: 12,
-        unpaidInvoices: 8,
-        pendingShipments: 38,
-        vendorId: 'DEMO',
-      );
+  ExecutiveKpis build() {
+    final user = ref.watch(currentUserProvider);
+    if (user != null && !user.isDemo) {
+      return ExecutiveKpis(vendorId: user.vendorId);
+    }
+    return const ExecutiveKpis(
+      todayRevenue: 4850000,
+      todayOrders: 12,
+      unpaidInvoices: 8,
+      pendingShipments: 38,
+      vendorId: 'DEMO',
+    );
+  }
 
   Future<void> syncFromServer() async {
     final user = ref.read(currentUserProvider);
@@ -40,7 +46,9 @@ class ExecutiveKpisNotifier extends Notifier<ExecutiveKpis> {
         pendingShipments: (data['pending_shipments'] as num?)?.toInt() ?? 0,
         vendorId: data['vendor_id']?.toString() ?? user.vendorId,
       );
-    } catch (_) {}
+    } catch (_) {
+      // Keep last good / zero state — never reinject demo numbers in live mode.
+    }
   }
 }
 
