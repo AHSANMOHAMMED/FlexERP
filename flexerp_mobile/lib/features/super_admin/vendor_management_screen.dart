@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api/odoo_client.dart';
+import '../../core/localization/lk_formatters.dart';
 import '../../core/theme/flex_colors.dart';
 import '../../core/theme/flex_typography.dart';
 import '../../core/widgets/flex_card.dart';
@@ -23,6 +24,7 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
   void _showCreateVendorModal(BuildContext context) {
     final nameCtrl = TextEditingController();
     final emailCtrl = TextEditingController();
+    final phoneCtrl = TextEditingController(text: '+94 ');
     final vendors = ref.read(vendorsProvider);
     final nextId = 'VND-00${vendors.length + 1}';
     final idCtrl = TextEditingController(text: nextId);
@@ -125,6 +127,15 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
                         hintText: 'admin@galleemporium.lk',
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: phoneCtrl,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: 'Store WhatsApp / phone (+94…)',
+                        hintText: '+94 11 234 5678',
+                      ),
+                    ),
                     const SizedBox(height: 16),
                     Text('Subscribed Modular Features', style: FlexTypography.labelLg),
                     const Text(
@@ -204,10 +215,20 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
                       icon: Icons.domain_add,
                       height: 48,
                       onPressed: () async {
+                        final phoneDigits = phoneCtrl.text.replaceAll(RegExp(r'\D'), '');
                         if (nameCtrl.text.trim().isEmpty || idCtrl.text.trim().isEmpty) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text('Please enter Vendor Name and ID'),
+                              backgroundColor: FlexColors.danger,
+                            ),
+                          );
+                          return;
+                        }
+                        if (phoneDigits.length < 9) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Enter a valid store phone (+94…) for receipts / WhatsApp'),
                               backgroundColor: FlexColors.danger,
                             ),
                           );
@@ -235,7 +256,7 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
                                 email: emailCtrl.text.trim().isNotEmpty
                                     ? emailCtrl.text.trim()
                                     : 'admin@${idCtrl.text.trim().toLowerCase()}.lk',
-                                phone: '+94 11 765 4321',
+                                phone: LkFormatters.formatLkPhone(phoneCtrl.text.trim()),
                                 city: 'Colombo',
                                 address: 'Retail Complex, Sri Lanka',
                                 taxTin:

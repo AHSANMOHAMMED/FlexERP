@@ -13,6 +13,7 @@ import '../../core/localization/lk_formatters.dart';
 import '../../core/api/odoo_client.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/vendor_repository.dart';
+import '../shared/whatsapp_number_sheet.dart';
 
 class PosReceiptScreen extends ConsumerStatefulWidget {
   final Map<String, dynamic> checkoutResult;
@@ -33,19 +34,12 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
   late Map<String, dynamic> _result;
   bool _loading = true;
   String? _error;
-  final _phoneCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _result = Map<String, dynamic>.from(widget.checkoutResult);
     Future.microtask(_load);
-  }
-
-  @override
-  void dispose() {
-    _phoneCtrl.dispose();
-    super.dispose();
   }
 
   Future<void> _load() async {
@@ -61,8 +55,9 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
           if (_result['amount_tax'] != null) 'amount_tax': _result['amount_tax'],
           'partner_name': 'Walk-in',
           'partner_phone': '',
-          'lines': const [],
           'company_name': user?.companyName ?? 'Demo',
+          'company_phone': '',
+          'lines': const [],
         };
         _loading = false;
       });
@@ -70,7 +65,6 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
     }
     try {
       final receipt = await api.posOrderReceipt(orderId);
-      _phoneCtrl.text = receipt['partner_phone']?.toString() ?? '';
       if (!mounted) return;
       setState(() {
         _receipt = receipt;
@@ -98,63 +92,24 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
     }
   }
 
-  Future<void> _sendWhatsApp() async {
-    final api = ref.read(flexerpApiProvider);
-    final phone = _phoneCtrl.text.trim();
-    if (phone.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter customer WhatsApp number (+94…)')),
-      );
-      return;
-    }
-    final orderId = parseOdooInt(_result['order_id']);
-    final invoiceId = parseOdooInt(_result['invoice_id']) ?? parseOdooInt(_receipt?['invoice_id']);
-    if (api == null) {
-      final text = Uri.encodeComponent(
-        'Receipt ${_receipt?['name']} — ${LkFormatters.formatLkr((_receipt?['amount_total'] as num?)?.toDouble() ?? 0)}',
-      );
-      final digits = phone.replaceAll(RegExp(r'\D'), '');
-      await Clipboard.setData(ClipboardData(text: 'https://wa.me/$digits?text=$text'));
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('WhatsApp link copied (demo / offline)')),
-      );
-      return;
-    }
-    final Map<String, dynamic> result;
-    try {
-      result = await api.whatsappSendInvoice(
-        phone: phone,
-        moveId: invoiceId,
-        posOrderId: invoiceId == null ? orderId : null,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('WhatsApp failed: ${describeError(e)}'), backgroundColor: FlexColors.danger),
-      );
-      return;
-    }
-    if (!mounted) return;
-    final status = result['status']?.toString() ?? 'unknown';
-    final waMe = result['wa_me_url']?.toString();
-    if (status == 'not_configured' && waMe != null) {
-      await Clipboard.setData(ClipboardData(text: waMe));
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('WhatsApp API not configured — wa.me link copied'),
-          backgroundColor: FlexColors.warning,
-        ),
-      );
-      return;
-    }
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(status == 'sent' ? 'WhatsApp sent' : 'WhatsApp: $status'),
-        backgroundColor: status == 'sent' ? FlexColors.success : FlexColors.warning,
-      ),
+  Future<void> _openWhatsApp() async {
+    final total = (_receipt?['amount_total'] as num?)?.toDouble() ??
+        (_result['amount_total'] as num?)?.toDouble() ??
+        0;
+    final orderId = parseOdooInt(_result['order_id']) ?? parseOdooInt(_result['id']);
+    final invoiceId =
+        parseOdooInt(_result['invoice_id']) ?? parseOdooInt(_receipt?['invoice_id']);
+    await showWhatsAppNumberSheet(
+      context,
+      ref,
+      title: 'Send receipt',
+      prefillPhone: _receipt?['partner_phone']?.toString(),
+      storePhone: _receipt?['company_phone']?.toString(),
+      customerName: _receipt?['partner_name']?.toString(),
+      storeName: _receipt?['company_name']?.toString(),
+      moveId: invoiceId,
+      posOrderId: invoiceId == null ? orderId : null,
+      amountLabel: LkFormatters.formatLkr(total),
     );
   }
 
@@ -226,12 +181,20 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
         0;
     final tax = (_receipt?['amount_tax'] as num?)?.toDouble() ??
         (_result['amount_tax'] as num?)?.toDouble();
+    final companyPhone = _receipt?['company_phone']?.toString() ?? '';
 
     return Scaffold(
       backgroundColor: FlexColors.canvasDark,
       appBar: AppBar(
         title: Text('Sale Receipt', style: FlexTypography.headlineMd),
         backgroundColor: FlexColors.surfaceDark,
+        actions: [
+          IconButton(
+            tooltip: 'WhatsApp receipt',
+            icon: const Icon(Icons.chat),
+            onPressed: _loading || _error != null ? null : _openWhatsApp,
+          ),
+        ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -246,11 +209,19 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
                         children: [
                           Text(_receipt?['company_name']?.toString() ?? 'FlexERP',
                               style: FlexTypography.headlineSm),
+                          if (companyPhone.isNotEmpty)
+                            Text(
+                              LkFormatters.formatLkPhone(companyPhone),
+                              style: FlexTypography.bodySm,
+                            ),
                           const SizedBox(height: 4),
                           Text(_receipt?['name']?.toString() ?? 'Receipt',
                               style: FlexTypography.labelLg),
-                          Text('Customer: ${_receipt?['partner_name'] ?? 'Walk-in'}',
-                              style: FlexTypography.bodySm),
+                          Text(
+                            'Customer: ${_receipt?['partner_name'] ?? 'Walk-in'}'
+                            '${(_receipt?['partner_phone']?.toString().isNotEmpty ?? false) ? ' · ${LkFormatters.formatLkPhone(_receipt!['partner_phone'].toString())}' : ''}',
+                            style: FlexTypography.bodySm,
+                          ),
                           const SizedBox(height: 12),
                           Text(LkFormatters.formatLkr(total),
                               style: FlexTypography.headlineMd.copyWith(color: FlexColors.primaryLight)),
@@ -280,19 +251,10 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    TextField(
-                      controller: _phoneCtrl,
-                      keyboardType: TextInputType.phone,
-                      decoration: const InputDecoration(
-                        labelText: 'Customer WhatsApp (+94…)',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
                     FlexButton(
                       label: 'Send via WhatsApp',
                       icon: Icons.chat,
-                      onPressed: _sendWhatsApp,
+                      onPressed: _openWhatsApp,
                     ),
                     const SizedBox(height: 8),
                     if (features.enableInvoicing)

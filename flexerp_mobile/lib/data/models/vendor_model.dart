@@ -297,11 +297,17 @@ class VendorProduct {
       vendorId: json['vendor_id'] as String? ?? '',
       name: json['name'] as String? ?? '',
       barcode: json['barcode'] as String? ?? '',
-      sku: json['sku'] as String? ?? '',
-      category: json['category'] as String? ?? '',
-      sellingPrice: (json['selling_price'] as num?)?.toDouble() ?? 0,
-      costPrice: (json['cost_price'] as num?)?.toDouble() ?? 0,
-      stockOnHand: ((json['stock_on_hand'] as num?)?.toInt() ?? 0),
+      sku: json['sku'] as String? ?? json['default_code'] as String? ?? '',
+      category: json['category'] as String? ?? json['categ_name'] as String? ?? '',
+      sellingPrice: (json['selling_price'] as num?)?.toDouble() ??
+          (json['list_price'] as num?)?.toDouble() ??
+          0,
+      costPrice: (json['cost_price'] as num?)?.toDouble() ??
+          (json['standard_price'] as num?)?.toDouble() ??
+          0,
+      stockOnHand: ((json['stock_on_hand'] as num?)?.toInt() ??
+          (json['qty_available'] as num?)?.toInt() ??
+          0),
     );
   }
 

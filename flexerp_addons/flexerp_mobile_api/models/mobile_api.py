@@ -121,9 +121,12 @@ class FlexerpMobileApi(models.AbstractModel):
 
     @api.model
     def _approval_record_company(self, record, res_model):
-        company = self.env['res.company']
+        company = False
         if res_model in ('hr.leave', 'hr.holidays'):
-            company = getattr(record, 'company_id', False) or record.employee_id.company_id
+            company = getattr(record, 'company_id', False)
+            # employee_id may be empty — never dereference a falsy Many2one.
+            if not company and record.employee_id:
+                company = record.employee_id.company_id
         elif 'company_id' in record._fields:
             company = record.company_id
         return company
@@ -428,7 +431,7 @@ class FlexerpMobileApi(models.AbstractModel):
         return {'session_id': session.id, 'state': session.state}
 
     @api.model
-    def pos_sync_products(self, config_id=None, limit=500):
+    def pos_sync_products(self, config_id=None, limit=120, offset=0):
         api = self._with_slot()
         api._require_feature('pos')
         domain = [
@@ -437,7 +440,7 @@ class FlexerpMobileApi(models.AbstractModel):
             '|', ('company_id', '=', False), ('company_id', '=', api.env.company.id),
         ]
         Product = api.env['product.product'].with_company(api.env.company)
-        products = Product.search(domain, limit=limit)
+        products = Product.search(domain, limit=int(limit or 120), offset=int(offset or 0), order='id asc')
         vendor_id = api.env.company.flexerp_vendor_code or f'VND-{api.env.company.id:03d}'
         rows = products.read([
             'display_name', 'barcode', 'default_code', 'lst_price',
@@ -665,12 +668,39 @@ class FlexerpMobileApi(models.AbstractModel):
     # Stock
     # ------------------------------------------------------------------
     @api.model
+    def _company_product_domain(self, api):
+        return ['|', ('company_id', '=', False), ('company_id', '=', api.env.company.id)]
+
+    @api.model
+    def _assert_barcode_unique(self, api, barcode, exclude_product_id=None):
+        code = (barcode or '').strip()
+        if not code:
+            return
+        domain = self._company_product_domain(api) + [('barcode', '=', code)]
+        if exclude_product_id:
+            domain = ['&'] + domain + [('id', '!=', int(exclude_product_id))]
+        if api.env['product.product'].sudo().search_count(domain):
+            raise UserError(f'Barcode {code} is already used for another product in this vendor.')
+
+    @api.model
+    def _ean13_check_digit(self, twelve_digits):
+        digits = [int(c) for c in twelve_digits]
+        odd = sum(digits[i] for i in range(0, 12, 2))
+        even = sum(digits[i] for i in range(1, 12, 2))
+        return str((10 - ((odd + even * 3) % 10)) % 10)
+
+    @api.model
     def stock_lookup_barcode(self, barcode):
         api = self._with_slot()
         api._require_feature('inventory')
-        product = api.env['product.product'].search([('barcode', '=', barcode)], limit=1)
+        code = (barcode or '').strip()
+        if not code:
+            return False
+        Product = api.env['product.product'].with_company(api.env.company)
+        company_domain = self._company_product_domain(api)
+        product = Product.search(company_domain + [('barcode', '=', code)], limit=1)
         if not product:
-            product = api.env['product.product'].search([('default_code', '=', barcode)], limit=1)
+            product = Product.search(company_domain + [('default_code', '=', code)], limit=1)
         if not product:
             return False
         quants = api.env['stock.quant'].search([
@@ -891,6 +921,7 @@ class FlexerpMobileApi(models.AbstractModel):
             'price_unit': line.price_unit,
             'price_subtotal': line.price_subtotal_incl or line.price_subtotal,
         } for line in order.lines]
+        company = order.company_id
         return {
             'order_id': order.id,
             'name': order.name or order.pos_reference,
@@ -899,8 +930,10 @@ class FlexerpMobileApi(models.AbstractModel):
             'partner_name': order.partner_id.display_name if order.partner_id else 'Walk-in',
             'partner_phone': order.partner_id.phone or '',
             'date_order': fields.Datetime.to_string(order.date_order) if order.date_order else None,
-            'company_name': order.company_id.name,
-            'vendor_id': order.company_id.flexerp_vendor_code or f'VND-{order.company_id.id:03d}',
+            'company_name': company.name,
+            'company_phone': company.phone or (company.partner_id.phone if company.partner_id else '') or '',
+            'company_email': company.email or (company.partner_id.email if company.partner_id else '') or '',
+            'vendor_id': company.flexerp_vendor_code or f'VND-{company.id:03d}',
             'lines': lines,
             'invoice_id': order.account_move.id if order.account_move else False,
         }
@@ -911,12 +944,16 @@ class FlexerpMobileApi(models.AbstractModel):
         api._require_feature('invoicing')
         move = api.env['account.move'].browse(int(move_id))
         api._assert_record_company(move)
+        company = move.company_id
         return {
             'id': move.id,
             'name': move.name,
             'partner_name': move.partner_id.display_name,
             'partner_vat': move.partner_id.vat or '',
-            'partner_phone': move.partner_id.phone or '',
+            'partner_phone': move.partner_id.phone or move.partner_id.mobile or '',
+            'company_name': company.name,
+            'company_phone': company.phone or (company.partner_id.phone if company.partner_id else '') or '',
+            'company_email': company.email or (company.partner_id.email if company.partner_id else '') or '',
             'amount_total': move.amount_total,
             'amount_residual': move.amount_residual,
             'amount_untaxed': move.amount_untaxed,
@@ -1023,11 +1060,15 @@ class FlexerpMobileApi(models.AbstractModel):
             move = api.env['account.move'].browse(int(move_id))
             api._assert_record_company(move)
             currency_name = move.currency_id.name if move.currency_id else 'LKR'
+            store_phone = move.company_id.phone or ''
+            customer = move.partner_id.display_name or 'Customer'
             message = (
                 f'Invoice {move.name}\n'
+                f'Customer: {customer}\n'
                 f'Amount: {move.amount_total:.2f} {currency_name}\n'
                 f'Status: {move.payment_state}\n'
                 f'From: {move.company_id.name}'
+                + (f' ({store_phone})' if store_phone else '')
             )
             pdf_url = api._invoice_share_pdf_url(move)
             pdf_note = f'\nPDF: {pdf_url}' if pdf_url else ''
@@ -1040,10 +1081,14 @@ class FlexerpMobileApi(models.AbstractModel):
                 if hasattr(order, 'currency_id') and order.currency_id
                 else (order.company_id.currency_id.name if order.company_id.currency_id else 'LKR')
             )
+            store_phone = order.company_id.phone or ''
+            customer = order.partner_id.display_name if order.partner_id else 'Walk-in'
             message = (
                 f'Receipt {order.name or order.pos_reference}\n'
+                f'Customer: {customer}\n'
                 f'Amount: {order.amount_total:.2f} {currency_name}\n'
                 f'From: {order.company_id.name}'
+                + (f' ({store_phone})' if store_phone else '')
             )
         else:
             raise ValidationError(self.env._('move_id or pos_order_id is required.'))
@@ -1180,7 +1225,7 @@ class FlexerpMobileApi(models.AbstractModel):
         }
 
     @api.model
-    def products_list(self, limit=200, search=None, category_id=None):
+    def products_list(self, limit=120, search=None, category_id=None, offset=0):
         api = self._with_slot()
         api._require_any_commerce()
         domain = [('sale_ok', '=', True), '|', ('company_id', '=', False), ('company_id', '=', api.env.company.id)]
@@ -1193,7 +1238,9 @@ class FlexerpMobileApi(models.AbstractModel):
         if category_id:
             domain.append(('categ_id', 'child_of', int(category_id)))
         Product = api.env['product.product'].with_company(api.env.company)
-        products = Product.search(domain, limit=int(limit or 200))
+        products = Product.search(
+            domain, limit=int(limit or 120), offset=int(offset or 0), order='id asc',
+        )
         rows = products.read([
             'display_name', 'default_code', 'barcode', 'lst_price', 'standard_price',
             'qty_available', 'categ_id', 'uom_id', 'type',
@@ -1211,6 +1258,99 @@ class FlexerpMobileApi(models.AbstractModel):
             'uom': row['uom_id'][1] if row['uom_id'] else '',
             'type': row['type'],
         } for row in rows]
+
+    @api.model
+    def products_generate_barcode(self):
+        """Allocate an unused Sri Lanka-style EAN-13 (479…) for this vendor slot."""
+        api = self._with_slot()
+        api._require_any_commerce()
+        company = api.env.company
+        prefix = f'479{company.id % 1000:03d}'
+        for _ in range(40):
+            body = f'{prefix}{fields.Datetime.now().strftime("%H%M%S")}{uuid4().hex[:2]}'[:12]
+            if len(body) < 12:
+                body = body.ljust(12, '0')
+            code = body + self._ean13_check_digit(body)
+            try:
+                self._assert_barcode_unique(api, code)
+                return {'barcode': code, 'company_id': company.id}
+            except UserError:
+                continue
+        raise UserError('Could not allocate a unique barcode. Try again.')
+
+    @api.model
+    def products_create(self, vals):
+        api = self._with_slot()
+        api._require_any_commerce()
+        name = (vals.get('name') or '').strip()
+        if not name:
+            raise ValidationError('Product name is required.')
+        barcode = (vals.get('barcode') or '').strip()
+        if not barcode:
+            barcode = self.products_generate_barcode()['barcode']
+        else:
+            self._assert_barcode_unique(api, barcode)
+        features = api.env['flexerp.feature.flag'].get_mobile_features(api.env.company.id)
+        Product = api.env['product.product'].with_company(api.env.company).sudo()
+        create_vals = {
+            'name': name,
+            'barcode': barcode,
+            'default_code': vals.get('default_code') or vals.get('sku') or False,
+            'list_price': float(vals.get('list_price') or vals.get('lst_price') or 0.0),
+            'standard_price': float(vals.get('standard_price') or 0.0),
+            'sale_ok': True,
+            'purchase_ok': True,
+            'type': vals.get('type') or 'product',
+            'company_id': api.env.company.id,
+            'available_in_pos': bool(features.get('pos')),
+        }
+        if vals.get('categ_id'):
+            create_vals['categ_id'] = int(vals['categ_id'])
+        product = Product.create(create_vals)
+        return {
+            'id': product.id,
+            'name': product.display_name,
+            'barcode': product.barcode or '',
+            'default_code': product.default_code or '',
+            'list_price': product.lst_price,
+            'qty_available': product.with_company(api.env.company).qty_available,
+        }
+
+    @api.model
+    def products_update(self, product_id, vals):
+        api = self._with_slot()
+        api._require_any_commerce()
+        product = api.env['product.product'].browse(int(product_id))
+        if not product.exists():
+            raise UserError('Product not found.')
+        if product.company_id and product.company_id.id != api.env.company.id:
+            raise AccessError('Product belongs to another vendor slot.')
+        write_vals = {}
+        if vals.get('name'):
+            write_vals['name'] = vals['name'].strip()
+        if 'list_price' in vals or 'lst_price' in vals:
+            write_vals['list_price'] = float(vals.get('list_price') or vals.get('lst_price') or 0.0)
+        if 'standard_price' in vals:
+            write_vals['standard_price'] = float(vals.get('standard_price') or 0.0)
+        if 'default_code' in vals or 'sku' in vals:
+            write_vals['default_code'] = vals.get('default_code') or vals.get('sku') or False
+        if 'barcode' in vals:
+            barcode = (vals.get('barcode') or '').strip()
+            if barcode:
+                self._assert_barcode_unique(api, barcode, exclude_product_id=product.id)
+            write_vals['barcode'] = barcode or False
+        if 'categ_id' in vals and vals.get('categ_id'):
+            write_vals['categ_id'] = int(vals['categ_id'])
+        if write_vals:
+            product.sudo().write(write_vals)
+        return {
+            'id': product.id,
+            'name': product.display_name,
+            'barcode': product.barcode or '',
+            'default_code': product.default_code or '',
+            'list_price': product.lst_price,
+            'qty_available': product.with_company(api.env.company).qty_available,
+        }
 
     @api.model
     def product_categories(self, limit=80):

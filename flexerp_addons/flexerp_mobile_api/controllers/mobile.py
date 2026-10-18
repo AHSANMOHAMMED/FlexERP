@@ -70,8 +70,8 @@ class FlexerpMobileController(http.Controller):
         return self._api().pos_close_session(session_id, counted_cash=counted_cash)
 
     @route('/flexerp/mobile/pos/products', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
-    def pos_products(self, config_id=None, limit=500, **kwargs):
-        return self._api().pos_sync_products(config_id=config_id, limit=limit)
+    def pos_products(self, config_id=None, limit=120, offset=0, **kwargs):
+        return self._api().pos_sync_products(config_id=config_id, limit=limit, offset=offset)
 
     @route('/flexerp/mobile/pos/order', type='jsonrpc', auth='user', methods=['POST'])
     def pos_order(self, **payload):
@@ -96,8 +96,22 @@ class FlexerpMobileController(http.Controller):
         return self._api().partners_create(vals)
 
     @route('/flexerp/mobile/products', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
-    def products(self, limit=200, search=None, category_id=None, **kwargs):
-        return self._api().products_list(limit=limit, search=search, category_id=category_id)
+    def products(self, limit=120, search=None, category_id=None, offset=0, **kwargs):
+        return self._api().products_list(
+            limit=limit, search=search, category_id=category_id, offset=offset,
+        )
+
+    @route('/flexerp/mobile/products/create', type='jsonrpc', auth='user', methods=['POST'])
+    def products_create(self, **vals):
+        return self._api().products_create(vals)
+
+    @route('/flexerp/mobile/products/update', type='jsonrpc', auth='user', methods=['POST'])
+    def products_update(self, product_id=None, **vals):
+        return self._api().products_update(product_id, vals)
+
+    @route('/flexerp/mobile/products/barcode/generate', type='jsonrpc', auth='user', methods=['POST'])
+    def products_barcode_generate(self, **kwargs):
+        return self._api().products_generate_barcode()
 
     @route('/flexerp/mobile/products/categories', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
     def product_categories(self, limit=80, **kwargs):

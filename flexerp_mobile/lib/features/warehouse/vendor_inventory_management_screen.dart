@@ -129,16 +129,39 @@ class _VendorInventoryManagementScreenState
                               hintText: '4790012...',
                               suffixIcon: IconButton(
                                 icon: const Icon(Icons.auto_awesome, color: FlexColors.primaryLight, size: 20),
-                                tooltip: 'Auto-generate Barcode',
-                                onPressed: () {
-                                  final gen = '479${DateTime.now().millisecondsSinceEpoch.toString().substring(3, 13)}';
-                                  setModalState(() => barcodeCtrl.text = gen);
+                                tooltip: 'Generate unique barcode',
+                                onPressed: () async {
+                                  final api = ref.read(flexerpApiProvider);
+                                  final user = ref.read(currentUserProvider);
+                                  if (user != null && !user.isDemo && api != null) {
+                                    try {
+                                      final code = await api.productsGenerateBarcode();
+                                      setModalState(() => barcodeCtrl.text = code);
+                                    } catch (e) {
+                                      if (!context.mounted) return;
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('Barcode generate failed: $e'),
+                                          backgroundColor: FlexColors.danger,
+                                        ),
+                                      );
+                                    }
+                                  } else {
+                                    final gen =
+                                        '479${DateTime.now().millisecondsSinceEpoch.toString().substring(3, 13)}';
+                                    setModalState(() => barcodeCtrl.text = gen);
+                                  }
                                 },
                               ),
                             ),
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Leave barcode empty to auto-generate a unique 479… EAN-13, or paste an existing code.',
+                      style: FlexTypography.bodySm.copyWith(color: FlexColors.textSecondaryDark),
                     ),
                     const SizedBox(height: 12),
                     Row(
@@ -182,44 +205,54 @@ class _VendorInventoryManagementScreenState
                       label: 'Save & Publish to Vendor DB',
                       icon: Icons.cloud_upload_outlined,
                       height: 48,
-                      onPressed: () {
-                        if (nameCtrl.text.trim().isEmpty ||
-                            barcodeCtrl.text.trim().isEmpty ||
-                            priceCtrl.text.trim().isEmpty) {
+                      onPressed: () async {
+                        if (nameCtrl.text.trim().isEmpty || priceCtrl.text.trim().isEmpty) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                              content: Text('Please fill Name, Barcode, and Selling Price'),
+                              content: Text('Please fill Name and Selling Price (barcode optional)'),
                               backgroundColor: FlexColors.danger,
                             ),
                           );
                           return;
                         }
 
-                        final currentVendor = ref.read(currentVendorProvider);
-                        final newProd = VendorProduct(
-                          id: DateTime.now().millisecondsSinceEpoch,
-                          vendorId: currentVendor.vendorId,
-                          name: nameCtrl.text.trim(),
-                          sku: skuCtrl.text.trim().isNotEmpty
-                              ? skuCtrl.text.trim()
-                              : 'SKU-${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}',
-                          barcode: barcodeCtrl.text.trim(),
-                          category: category,
-                          costPrice: double.tryParse(costCtrl.text.trim()) ?? 0.0,
-                          sellingPrice: double.tryParse(priceCtrl.text.trim()) ?? 0.0,
-                          stockOnHand: int.tryParse(stockCtrl.text.trim()) ?? 0,
-                          minStockAlert: 5,
-                          updatedAt: DateTime.now(),
-                        );
-
-                        ref.read(vendorInventoryProvider.notifier).addProduct(newProd);
-                        Navigator.pop(ctx);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Added ${newProd.name} to ${currentVendor.name} DB!'),
-                            backgroundColor: FlexColors.success,
-                          ),
-                        );
+                        try {
+                          final created = await ref.read(vendorInventoryProvider.notifier).createProductLive(
+                                name: nameCtrl.text.trim(),
+                                listPrice: double.tryParse(priceCtrl.text.trim()) ?? 0.0,
+                                standardPrice: double.tryParse(costCtrl.text.trim()) ?? 0.0,
+                                barcode: barcodeCtrl.text.trim().isEmpty ? null : barcodeCtrl.text.trim(),
+                                sku: skuCtrl.text.trim().isEmpty ? null : skuCtrl.text.trim(),
+                              );
+                          final initial = int.tryParse(stockCtrl.text.trim()) ?? 0;
+                          if (initial > 0 && created.id > 0) {
+                            try {
+                              await ref.read(vendorInventoryProvider.notifier).adjustStock(
+                                    created.id,
+                                    initial,
+                                    reason: 'Opening stock',
+                                  );
+                            } catch (_) {}
+                          }
+                          if (!ctx.mounted) return;
+                          Navigator.pop(ctx);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'Added ${created.name} · ${created.barcode.isEmpty ? 'no barcode' : created.barcode}',
+                              ),
+                              backgroundColor: FlexColors.success,
+                            ),
+                          );
+                        } catch (e) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Create failed: $e'),
+                              backgroundColor: FlexColors.danger,
+                            ),
+                          );
+                        }
                       },
                     ),
                   ],

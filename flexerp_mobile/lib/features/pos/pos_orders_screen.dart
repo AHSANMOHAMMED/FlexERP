@@ -5,6 +5,8 @@ import '../../core/theme/flex_colors.dart';
 import '../../core/widgets/flex_app_bar.dart';
 import '../../data/models/pos_order.dart';
 import '../../data/repositories/pos_repository.dart';
+import '../../data/repositories/auth_repository.dart';
+import '../shared/whatsapp_number_sheet.dart';
 
 class PosOrdersScreen extends ConsumerStatefulWidget {
   const PosOrdersScreen({super.key});
@@ -299,6 +301,26 @@ class _PosOrdersScreenState extends ConsumerState<PosOrdersScreen> {
                   },
                   icon: const Icon(Icons.print, size: 18),
                   label: const Text('Reprint ESC/POS Thermal Receipt', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    await showWhatsAppNumberSheet(
+                      context,
+                      ref,
+                      title: 'Send receipt',
+                      customerName: order.customerName,
+                      storeName: ref.read(currentUserProvider)?.companyName,
+                      posOrderId: order.id > 0 ? order.id : null,
+                      amountLabel: LkFormatters.formatLkr(order.totalAmount),
+                    );
+                  },
+                  icon: const Icon(Icons.chat, size: 18),
+                  label: const Text('WhatsApp receipt'),
                 ),
               ),
               const SizedBox(height: 10),

@@ -16,6 +16,7 @@ import '../../data/models/account_invoice.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/accounting_repository.dart';
 import 'payment_register_screen.dart';
+import '../shared/whatsapp_number_sheet.dart';
 
 class InvoicesHubScreen extends ConsumerStatefulWidget {
   const InvoicesHubScreen({super.key});
@@ -193,63 +194,17 @@ class _InvoiceCard extends ConsumerWidget {
   }
 
   Future<void> _sendWhatsApp(BuildContext context, WidgetRef ref) async {
-    final api = ref.read(flexerpApiProvider);
-    final user = ref.read(currentUserProvider);
-    if (user == null || user.isDemo || api == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Demo reminder for ${invoice.number}')),
-      );
-      return;
-    }
-    final phoneCtrl = TextEditingController();
-    final phone = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: FlexColors.surfaceDark,
-        title: const Text('WhatsApp invoice'),
-        content: TextField(
-          controller: phoneCtrl,
-          keyboardType: TextInputType.phone,
-          decoration: const InputDecoration(labelText: 'Customer phone (+94…)'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, phoneCtrl.text.trim()),
-            child: const Text('Send'),
-          ),
-        ],
+    await showWhatsAppNumberSheet(
+      context,
+      ref,
+      title: 'Send invoice',
+      customerName: invoice.partnerName,
+      storeName: ref.read(currentUserProvider)?.companyName,
+      moveId: invoice.id,
+      amountLabel: LkFormatters.formatLkr(
+        invoice.amountResidual > 0 ? invoice.amountResidual : invoice.amountTotal,
       ),
     );
-    if (phone == null || phone.isEmpty) return;
-    try {
-      final result = await api.whatsappSendInvoice(phone: phone, moveId: invoice.id);
-      if (!context.mounted) return;
-      final status = result['status']?.toString() ?? 'unknown';
-      final waMe = result['wa_me_url']?.toString();
-      if (status == 'not_configured' && waMe != null) {
-        await Clipboard.setData(ClipboardData(text: waMe));
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('WhatsApp API not configured — wa.me link copied'),
-            backgroundColor: FlexColors.warning,
-          ),
-        );
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(status == 'sent' ? 'WhatsApp sent' : 'WhatsApp: $status'),
-          backgroundColor: status == 'sent' ? FlexColors.success : FlexColors.warning,
-        ),
-      );
-    } catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('WhatsApp failed: $e'), backgroundColor: FlexColors.danger),
-      );
-    }
   }
 
   Future<void> _openDetail(BuildContext context, WidgetRef ref) async {

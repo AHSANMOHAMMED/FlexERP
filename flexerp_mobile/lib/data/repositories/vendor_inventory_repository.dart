@@ -246,8 +246,21 @@ class VendorInventoryNotifier extends Notifier<List<VendorProduct>> {
     final vendor = ref.read(currentVendorProvider);
     if (user == null || user.isDemo || api == null) return;
     try {
-      final rows = await api.posProducts();
-      final products = rows.map(VendorProduct.fromApi).toList();
+      final products = <VendorProduct>[];
+      var offset = 0;
+      const page = 120;
+      while (true) {
+        final rows = await api.posProducts(limit: page, offset: offset);
+        if (rows.isEmpty) break;
+        products.addAll(rows.map((r) {
+          final mapped = Map<String, dynamic>.from(r);
+          mapped['vendor_id'] = vendor.vendorId;
+          return VendorProduct.fromApi(mapped);
+        }));
+        if (rows.length < page) break;
+        offset += page;
+        if (offset > 5000) break; // hard cap for safety
+      }
       _liveCache[vendor.vendorId] = products;
       _rebuildBarcodeIndex(products);
       state = products;
@@ -256,6 +269,44 @@ class VendorInventoryNotifier extends Notifier<List<VendorProduct>> {
       ref.read(vendorInventoryErrorProvider.notifier).setError(e.toString());
       rethrow;
     }
+  }
+
+  Future<VendorProduct> createProductLive({
+    required String name,
+    required double listPrice,
+    double standardPrice = 0,
+    String? barcode,
+    String? sku,
+  }) async {
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    final vendor = ref.read(currentVendorProvider);
+    if (user == null || user.isDemo || api == null) {
+      final local = VendorProduct(
+        id: DateTime.now().millisecondsSinceEpoch,
+        vendorId: vendor.vendorId,
+        name: name,
+        barcode: barcode ?? '',
+        sku: sku ?? '',
+        category: 'Hardware',
+        sellingPrice: listPrice,
+        costPrice: standardPrice,
+        stockOnHand: 0,
+      );
+      addProduct(local);
+      return local;
+    }
+    final created = await api.productsCreate({
+      'name': name,
+      'list_price': listPrice,
+      'standard_price': standardPrice,
+      if (barcode != null && barcode.isNotEmpty) 'barcode': barcode,
+      if (sku != null && sku.isNotEmpty) 'default_code': sku,
+    });
+    created['vendor_id'] = vendor.vendorId;
+    final product = VendorProduct.fromApi(created);
+    addProduct(product);
+    return product;
   }
 
   Future<VendorProduct?> lookupBarcodeLive(String barcode) async {

@@ -206,14 +206,19 @@ class FlexerpMobileApi {
     return Map<String, dynamic>.from(res as Map);
   }
 
-  Future<List<Map<String, dynamic>>> posProducts({int? configId, int limit = 500}) async {
+  Future<List<Map<String, dynamic>>> posProducts({
+    int? configId,
+    int limit = 120,
+    int offset = 0,
+  }) async {
     final res = await _call(
       '/flexerp/mobile/pos/products',
       {
         if (configId != null) 'config_id': configId,
         'limit': limit,
+        'offset': offset,
       },
-      'pos/products:${configId ?? 0}:$limit',
+      offset == 0 ? 'pos/products:${configId ?? 0}:$limit' : null,
     );
     if (res is List) {
       return res.map((e) => Map<String, dynamic>.from(e as Map)).toList();
@@ -269,7 +274,8 @@ class FlexerpMobileApi {
   }
 
   Future<List<Map<String, dynamic>>> products({
-    int limit = 200,
+    int limit = 120,
+    int offset = 0,
     String? search,
     int? categoryId,
   }) async {
@@ -277,15 +283,41 @@ class FlexerpMobileApi {
       '/flexerp/mobile/products',
       {
         'limit': limit,
+        'offset': offset,
         if (search != null) 'search': search,
         if (categoryId != null) 'category_id': categoryId,
       },
-      (search == null || search.isEmpty) && categoryId == null ? 'products:$limit' : null,
+      (search == null || search.isEmpty) && categoryId == null && offset == 0
+          ? 'products:$limit'
+          : null,
     );
     if (res is List) {
       return res.map((e) => Map<String, dynamic>.from(e as Map)).toList();
     }
     return [];
+  }
+
+  Future<Map<String, dynamic>> productsCreate(Map<String, dynamic> vals) async {
+    client.invalidateCachePrefix('products');
+    client.invalidateCachePrefix('pos/products');
+    final res = await client.callRoute('/flexerp/mobile/products/create', vals);
+    return Map<String, dynamic>.from(res as Map);
+  }
+
+  Future<Map<String, dynamic>> productsUpdate(int productId, Map<String, dynamic> vals) async {
+    client.invalidateCachePrefix('products');
+    client.invalidateCachePrefix('pos/products');
+    final res = await client.callRoute('/flexerp/mobile/products/update', {
+      'product_id': productId,
+      ...vals,
+    });
+    return Map<String, dynamic>.from(res as Map);
+  }
+
+  Future<String> productsGenerateBarcode() async {
+    final res = await client.callRoute('/flexerp/mobile/products/barcode/generate', {});
+    final map = Map<String, dynamic>.from(res as Map);
+    return map['barcode']?.toString() ?? '';
   }
 
   Future<List<Map<String, dynamic>>> productCategories({int limit = 80}) async {

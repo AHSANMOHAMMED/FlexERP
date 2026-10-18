@@ -58,10 +58,12 @@ class FlexerpVendorSlot(models.AbstractModel):
         if preset not in ('small_shop', 'mall', 'custom'):
             preset = 'small_shop'
 
+        phone = (vals.get('phone') or '').strip() or False
+        email = (vals.get('email') or '').strip() or False
         company = Company.create({
             'name': name,
-            'email': vals.get('email') or False,
-            'phone': vals.get('phone') or False,
+            'email': email,
+            'phone': phone,
             'city': vals.get('city') or False,
             'street': vals.get('street') or vals.get('address') or False,
             'vat': vals.get('vat') or vals.get('tax_tin') or False,
@@ -69,6 +71,16 @@ class FlexerpVendorSlot(models.AbstractModel):
             'flexerp_preset': preset if preset != 'custom' else 'small_shop',
             'flexerp_is_active_vendor': True,
         })
+        # Keep commercial partner in sync for receipts / WhatsApp "From" identity.
+        if company.partner_id:
+            company.partner_id.sudo().write({
+                'name': name,
+                'phone': phone,
+                'email': email,
+                'city': vals.get('city') or False,
+                'street': vals.get('street') or vals.get('address') or False,
+                'vat': vals.get('vat') or vals.get('tax_tin') or False,
+            })
         if preset in ('small_shop', 'mall'):
             self.env['flexerp.feature.flag'].apply_preset(company.id, preset)
         else:
@@ -84,6 +96,7 @@ class FlexerpVendorSlot(models.AbstractModel):
         partner = self.env['res.partner'].sudo().create({
             'name': admin_name,
             'email': admin_login,
+            'phone': phone,
             'company_id': company.id,
         })
         user = self.env['res.users'].sudo().with_context(no_reset_password=True).create({
