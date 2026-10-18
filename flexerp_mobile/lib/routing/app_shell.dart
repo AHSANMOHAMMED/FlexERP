@@ -71,8 +71,9 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
     final sync = ref.read(liveSyncProvider.notifier);
     final foreground = state == AppLifecycleState.resumed;
     sync.setForeground(foreground);
-    if (!foreground) {
-      // Keep timer but polls no-op while backgrounded.
+    if (foreground) {
+      // Replay queued POS/payments after connectivity returns.
+      ref.read(offlineQueueProvider.notifier).flush();
     }
   }
 

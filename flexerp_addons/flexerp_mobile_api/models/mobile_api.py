@@ -111,6 +111,23 @@ class FlexerpMobileApi(models.AbstractModel):
             self._require_company_access(company=company)
         return record
 
+    @api.model
+    def _assert_approval_record_company(self, record, res_model):
+        """Ensure approval target belongs to an accessible vendor company."""
+        if not record or not record.exists():
+            return record
+        company = False
+        if res_model in ('hr.leave', 'hr.holidays'):
+            company = getattr(record, 'company_id', False) or record.employee_id.company_id
+        elif 'company_id' in record._fields:
+            company = record.company_id
+        if not company:
+            if not self._is_platform_admin():
+                raise AccessError('Cannot act on approval without company scope.')
+            return record
+        self._require_company_access(company=company)
+        return record
+
     # ------------------------------------------------------------------
     # Bootstrap
     # ------------------------------------------------------------------
@@ -246,20 +263,36 @@ class FlexerpMobileApi(models.AbstractModel):
     @api.model
     def approval_action(self, activity_id, action='approve'):
         """Approve or reject a pending mail.activity and related business record."""
-        activity = self.env['mail.activity'].sudo().browse(int(activity_id))
+        api = self._with_slot()
+        activity = api.env['mail.activity'].sudo().browse(int(activity_id))
         if not activity.exists():
             raise UserError('Approval activity not found.')
-        if not self._is_platform_admin() and activity.user_id != self.env.user:
-            # Vendor admins may act on activities assigned to them in their companies.
-            if not self.env.user.has_group('flexerp_vendor_rbac.group_vendor_admin'):
-                raise AccessError('Not allowed to act on this approval.')
+
+        is_assignee = activity.user_id == api.env.user
+        is_vendor_admin = api.env.user.has_group('flexerp_vendor_rbac.group_vendor_admin')
+        if not api._is_platform_admin() and not is_assignee and not is_vendor_admin:
+            raise AccessError('Not allowed to act on this approval.')
+
         action = (action or 'approve').lower()
         res_model = activity.res_model
         res_id = activity.res_id
-        record = self.env[res_model].sudo().browse(res_id) if res_model and res_id else False
+        record = False
+        if res_model and res_id and res_model in api.env:
+            candidate = api.env[res_model].sudo().browse(res_id)
+            if candidate.exists():
+                record = candidate
+
+        # Vendor users (incl. vendor admins) may only act on records in their slot.
+        if not api._is_platform_admin():
+            if record:
+                api._assert_approval_record_company(record, res_model)
+            elif activity.user_id.company_id:
+                api._require_company_access(company=activity.user_id.company_id)
+            else:
+                raise AccessError('Cannot act on approval without company scope.')
 
         if action == 'approve':
-            if record and record.exists():
+            if record:
                 if res_model == 'sale.order' and record.state in ('draft', 'sent'):
                     record.action_confirm()
                 elif res_model == 'purchase.order' and hasattr(record, 'button_confirm') and record.state in ('draft', 'sent'):
@@ -272,7 +305,7 @@ class FlexerpMobileApi(models.AbstractModel):
             return {'ok': True, 'action': 'approve', 'activity_id': activity_id, 'res_model': res_model, 'res_id': res_id}
 
         if action in ('reject', 'cancel'):
-            if record and record.exists():
+            if record:
                 if res_model == 'sale.order' and record.state in ('draft', 'sent') and hasattr(record, 'action_cancel'):
                     record.action_cancel()
                 elif res_model == 'purchase.order' and record.state in ('draft', 'sent', 'to approve') and hasattr(record, 'button_cancel'):
@@ -320,13 +353,19 @@ class FlexerpMobileApi(models.AbstractModel):
         api._require_feature('pos')
         session = api.env['pos.session'].browse(int(session_id))
         api._assert_record_company(session)
+        if session.state == 'closed':
+            return {'session_id': session.id, 'state': session.state, 'already_closed': True}
         if session.state == 'opened':
             session.action_pos_session_closing_control()
         if session.state in ('closing_control', 'opened'):
-            try:
-                session.action_pos_session_close()
-            except Exception:
-                pass
+            # Fail loud — mobile must not locally mark closed while Odoo is still open.
+            session.action_pos_session_close()
+        session.invalidate_recordset()
+        if session.state != 'closed':
+            raise UserError(
+                f'POS session close incomplete (state={session.state}). '
+                'Resolve cash control in Odoo backend, then retry.'
+            )
         return {'session_id': session.id, 'state': session.state}
 
     @api.model
@@ -357,6 +396,21 @@ class FlexerpMobileApi(models.AbstractModel):
             'vendor_id': vendor_id,
         } for row in rows]
 
+    def _pos_order_mobile_dict(self, order, invoice_id=False, invoice_name=False, invoice_error=None, idempotent=False):
+        return {
+            'order_id': order.id,
+            'name': order.name or order.pos_reference,
+            'uuid': order.uuid,
+            'amount_total': order.amount_total,
+            'state': order.state,
+            'invoice_id': invoice_id,
+            'invoice_name': invoice_name,
+            'invoice_error': invoice_error,
+            'idempotent': idempotent,
+            'partner_id': order.partner_id.id if order.partner_id else False,
+            'partner_name': order.partner_id.display_name if order.partner_id else 'Walk-in',
+        }
+
     @api.model
     def pos_push_order(self, payload):
         api = self._with_slot()
@@ -370,6 +424,21 @@ class FlexerpMobileApi(models.AbstractModel):
         if not lines:
             raise ValidationError('Order must contain at least one line.')
 
+        # Client UUID makes offline/retry pushes idempotent (no double sale).
+        order_uuid = (payload.get('uuid') or '').strip() or str(uuid4())
+        existing = api.env['pos.order'].sudo().search([
+            ('uuid', '=', order_uuid),
+            ('company_id', '=', session.company_id.id),
+        ], limit=1)
+        if existing:
+            inv = existing.account_move
+            return api._pos_order_mobile_dict(
+                existing,
+                invoice_id=inv.id if inv else False,
+                invoice_name=inv.name if inv else False,
+                idempotent=True,
+            )
+
         # Stock availability check (prevent silent oversell)
         for line in lines:
             product = api.env['product.product'].browse(int(line['product_id']))
@@ -381,7 +450,6 @@ class FlexerpMobileApi(models.AbstractModel):
                 )
 
         amount_total = float(payload.get('amount_total') or 0.0)
-        order_uuid = payload.get('uuid') or str(uuid4())
         payment_methods = session.config_id.payment_method_ids
         if not payment_methods:
             raise UserError('No payment methods configured on this POS.')
@@ -428,14 +496,15 @@ class FlexerpMobileApi(models.AbstractModel):
         })
         invoice_id = False
         invoice_name = False
+        invoice_error = None
         features = api.env['flexerp.feature.flag'].get_mobile_features(api.env.company.id)
         if payload.get('create_invoice') and features.get('invoicing'):
             try:
                 inv_result = api.invoice_create_from_pos(order.id)
                 invoice_id = inv_result.get('invoice_id')
                 invoice_name = inv_result.get('name')
-            except Exception:
-                invoice_id = False
+            except Exception as e:
+                invoice_error = str(e)
         api.env['flexerp.live.event'].emit(api.env.company.id, 'sale', {
             'order_id': order.id,
             'name': order.name,
@@ -446,17 +515,12 @@ class FlexerpMobileApi(models.AbstractModel):
             'source': 'pos_order',
             'order_id': order.id,
         })
-        return {
-            'order_id': order.id,
-            'name': order.name or order.pos_reference,
-            'uuid': order.uuid,
-            'amount_total': order.amount_total,
-            'state': order.state,
-            'invoice_id': invoice_id,
-            'invoice_name': invoice_name,
-            'partner_id': order.partner_id.id if order.partner_id else False,
-            'partner_name': order.partner_id.display_name if order.partner_id else 'Walk-in',
-        }
+        return api._pos_order_mobile_dict(
+            order,
+            invoice_id=invoice_id,
+            invoice_name=invoice_name,
+            invoice_error=invoice_error,
+        )
 
     # ------------------------------------------------------------------
     # Stock
@@ -585,12 +649,18 @@ class FlexerpMobileApi(models.AbstractModel):
         Quant = api.env['stock.quant'].sudo()
         if location_id:
             location = api.env['stock.location'].browse(int(location_id))
+            api._assert_record_company(location)
         else:
             location = api.env['stock.warehouse'].search(
                 [('company_id', '=', api.env.company.id)], limit=1,
             ).lot_stock_id
         if not location:
             raise UserError('No stock location for this vendor slot.')
+        # Serialize concurrent adjusts on the same product+location.
+        api.env.cr.execute(
+            "SELECT id FROM product_product WHERE id = %s FOR UPDATE",
+            (product.id,),
+        )
         quant = Quant.search([
             ('product_id', '=', product.id),
             ('location_id', '=', location.id),
@@ -771,9 +841,11 @@ class FlexerpMobileApi(models.AbstractModel):
     @api.model
     def live_poll(self, since_id=0, limit=50):
         api = self._with_slot()
-        company_ids = api.env.company.ids
-        if self._is_platform_admin():
-            company_ids = self.env.user.company_ids.ids
+        # Slot users: current vendor company only. Platform admins: all accessible companies.
+        if api._is_platform_admin():
+            company_ids = api.env.user.company_ids.ids
+        else:
+            company_ids = [api.env.company.id]
         domain = [('company_id', 'in', company_ids)]
         if since_id:
             domain.append(('id', '>', int(since_id)))
@@ -1158,17 +1230,33 @@ class FlexerpMobileApi(models.AbstractModel):
         api._assert_record_company(move)
         if move.state != 'posted':
             raise UserError('Invoice must be posted before registering payment.')
+        move.invalidate_recordset(['amount_residual', 'payment_state'])
+        # Offline/retry safety: already settled invoices return current state (no double pay).
+        if float_compare(move.amount_residual, 0.0, precision_digits=2) <= 0:
+            return {
+                'move_id': move.id,
+                'payment_state': move.payment_state,
+                'amount_residual': move.amount_residual,
+                'action': False,
+                'idempotent': True,
+            }
+        pay_amount = amount if amount is not None else move.amount_residual
+        if float_compare(pay_amount, 0.0, precision_digits=2) <= 0:
+            raise UserError('Payment amount must be positive.')
+        if float_compare(pay_amount, move.amount_residual, precision_digits=2) > 0:
+            raise UserError('Payment amount exceeds invoice residual.')
         wizard = api.env['account.payment.register'].with_context(
             active_model='account.move',
             active_ids=move.ids,
         ).create({
-            'amount': amount if amount is not None else move.amount_residual,
+            'amount': pay_amount,
             'payment_date': payment_date or fields.Date.context_today(api),
             'communication': memo or move.name,
         })
         if journal_id:
             wizard.journal_id = int(journal_id)
         action = wizard.action_create_payments()
+        move.invalidate_recordset(['amount_residual', 'payment_state'])
         api.env['flexerp.live.event'].emit(api.env.company.id, 'invoice', {
             'move_id': move.id,
             'payment_state': move.payment_state,
@@ -1179,6 +1267,7 @@ class FlexerpMobileApi(models.AbstractModel):
             'payment_state': move.payment_state,
             'amount_residual': move.amount_residual,
             'action': bool(action),
+            'idempotent': False,
         }
 
     # ------------------------------------------------------------------
@@ -1206,15 +1295,20 @@ class FlexerpMobileApi(models.AbstractModel):
         api = self._with_slot()
         api._require_feature('hr')
         api._require_odoo_model('hr.leave', 'Time Off')
-        domain = [
+        company_id = api.env.company.id
+        # Always constrain by employee company; AND leave.company_id when present.
+        employee_domain = [
             '|',
             ('employee_id.company_id', '=', False),
-            ('employee_id.company_id', '=', api.env.company.id),
+            ('employee_id.company_id', '=', company_id),
         ]
         if 'company_id' in api.env['hr.leave']._fields:
             domain = [
-                '|', ('company_id', '=', False), ('company_id', '=', api.env.company.id),
-            ]
+                '&',
+                '|', ('company_id', '=', False), ('company_id', '=', company_id),
+            ] + employee_domain
+        else:
+            domain = employee_domain
         leaves = api.env['hr.leave'].search(domain, limit=limit, order='date_from desc')
         return [{
             'id': leave.id,

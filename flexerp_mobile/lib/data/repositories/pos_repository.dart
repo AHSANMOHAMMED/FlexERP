@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/pos_order.dart';
 import '../mock/mock_sri_lanka_data.dart';
@@ -5,6 +7,13 @@ import '../../core/api/odoo_client.dart';
 import '../../core/offline/offline_queue.dart';
 import 'auth_repository.dart';
 import 'vendor_inventory_repository.dart';
+
+String _newPosOrderUuid() {
+  final r = Random.secure();
+  final hex = List.generate(16, (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+  return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-4${hex.substring(13, 16)}-'
+      '${(8 + r.nextInt(4)).toRadixString(16)}${hex.substring(17, 20)}-${hex.substring(20)}';
+}
 
 final posProductsProvider = Provider<List<PosProduct>>((ref) {
   final vendorProducts = ref.watch(vendorInventoryProvider);
@@ -53,8 +62,13 @@ class PosCartNotifier extends Notifier<List<PosCartItem>> {
             })
         .toList();
     final total = totalAmount;
+    if (session.id <= 0 && user != null && !user.isDemo) {
+      throw OdooException('POS session is not open. Open a shift before selling.');
+    }
+    final orderUuid = _newPosOrderUuid();
     final payload = {
       'session_id': session.id,
+      'uuid': orderUuid,
       'lines': lines,
       'amount_total': total,
       'payment_method': paymentMethod,
@@ -62,7 +76,7 @@ class PosCartNotifier extends Notifier<List<PosCartItem>> {
       'create_invoice': createInvoice,
     };
 
-    Map<String, dynamic> result = {'queued': false, 'local': true};
+    Map<String, dynamic> result = {'queued': false, 'local': true, 'uuid': orderUuid};
 
     if (user != null && !user.isDemo) {
       final api = ref.read(flexerpApiProvider);
@@ -71,12 +85,19 @@ class PosCartNotifier extends Notifier<List<PosCartItem>> {
         result = await api.posPushOrder(payload);
         result['queued'] = false;
         result['local'] = false;
-      } catch (_) {
+      } catch (e) {
+        // Queue with stable uuid so retries never double-post the sale.
         await ref.read(offlineQueueProvider.notifier).enqueue(
               type: 'pos_order',
               payload: payload,
             );
-        result = {'queued': true, 'local': false, 'amount_total': total};
+        result = {
+          'queued': true,
+          'local': false,
+          'amount_total': total,
+          'uuid': orderUuid,
+          'error': e.toString(),
+        };
       }
     }
 
