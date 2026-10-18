@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>FlexERP uses the camera to scan product barcodes at the POS and in the warehouse.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>FlexERP records your location with attendance check-in and check-out.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

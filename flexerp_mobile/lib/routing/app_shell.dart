@@ -62,7 +62,11 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
     WidgetsBinding.instance.addObserver(this);
     Future.microtask(() {
       ref.read(offlineQueueProvider.notifier).flush();
-      ref.read(liveSyncProvider.notifier).start();
+      // Start from bootstrap's live_last_event_id (never replay since_id=0).
+      ref.read(liveSyncProvider.notifier).start(
+            fromEventId: ref.read(currentUserProvider.notifier).liveStartEventId,
+            reset: true,
+          );
     });
   }
 

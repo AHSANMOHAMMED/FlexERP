@@ -9,6 +9,7 @@ import '../../core/widgets/flex_card.dart';
 import '../../core/widgets/flex_button.dart';
 import '../../core/localization/lk_formatters.dart';
 import '../../core/live/live_sync.dart';
+import '../../core/api/odoo_client.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/pos_repository.dart';
 import '../../data/repositories/vendor_repository.dart';
@@ -41,10 +42,15 @@ class _PosTenderScreenState extends ConsumerState<PosTenderScreen> {
   String? _payStatus;
   Timer? _pollTimer;
 
+  /// One uuid per checkout: re-submitting after an error reuses it so the
+  /// server never records the sale twice.
+  late final String _orderUuid;
+
   @override
   void initState() {
     super.initState();
     _tenderedAmount = widget.totalAmount;
+    _orderUuid = newPosOrderUuid();
   }
 
   @override
@@ -109,7 +115,13 @@ class _PosTenderScreenState extends ConsumerState<PosTenderScreen> {
     final api = ref.read(flexerpApiProvider);
     final refCode = _payRef;
     if (api == null || refCode == null) return;
-    final status = await api.paymentLinkStatus(refCode);
+    final Map<String, dynamic> status;
+    try {
+      status = await api.paymentLinkStatus(refCode);
+    } catch (e) {
+      debugPrint('FlexERP: LankaQR status poll failed: $e');
+      return;
+    }
     final st = status['status']?.toString();
     if (!mounted) return;
     setState(() => _payStatus = st);
@@ -145,15 +157,39 @@ class _PosTenderScreenState extends ConsumerState<PosTenderScreen> {
     final card = _paymentMethod == 'Cash' ? 0.0 : widget.totalAmount;
 
     final features = ref.read(currentVendorFeaturesProvider);
-    final result = await ref.read(posCartProvider.notifier).completeCheckoutAndPush(
-          paymentMethod: methodKey,
-          cashAmount: cash,
-          cardAmount: card,
-          partnerId: widget.partnerId,
-          createInvoice: widget.createInvoice && features.enableInvoicing,
-        );
+    final Map<String, dynamic> result;
+    try {
+      result = await ref.read(posCartProvider.notifier).completeCheckoutAndPush(
+            paymentMethod: methodKey,
+            cashAmount: cash,
+            cardAmount: card,
+            orderUuid: _orderUuid,
+            partnerId: widget.partnerId,
+            createInvoice: widget.createInvoice && features.enableInvoicing,
+          );
+    } catch (e) {
+      debugPrint('FlexERP: POS checkout rejected: $e');
+      if (!mounted) return;
+      setState(() => _busy = false);
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Sale not completed'),
+          content: Text(
+            '${describeError(e)}\n\nThe sale was NOT recorded and stock was not changed. '
+            'Fix the issue and try again.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK')),
+          ],
+        ),
+      );
+      return;
+    }
 
-    ref.read(liveSyncProvider.notifier).notifyLocal(type: 'sale');
+    if (result['queued'] != true) {
+      ref.read(liveSyncProvider.notifier).notifyLocal(type: 'sale');
+    }
 
     if (!mounted) return;
     setState(() => _busy = false);
@@ -241,15 +277,15 @@ class _PosTenderScreenState extends ConsumerState<PosTenderScreen> {
                     onTap: () => setState(() => _tenderedAmount = widget.totalAmount),
                   ),
                   _QuickAmountButton(
-                    label: 'Rs. 5,000',
+                    label: '${LkFormatters.currencySymbol} 5,000',
                     onTap: () => setState(() => _tenderedAmount = 5000),
                   ),
                   _QuickAmountButton(
-                    label: 'Rs. 10,000',
+                    label: '${LkFormatters.currencySymbol} 10,000',
                     onTap: () => setState(() => _tenderedAmount = 10000),
                   ),
                   _QuickAmountButton(
-                    label: 'Rs. 50,000',
+                    label: '${LkFormatters.currencySymbol} 50,000',
                     onTap: () => setState(() => _tenderedAmount = 50000),
                   ),
                 ],

@@ -24,8 +24,8 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
-  final _emailController = TextEditingController(text: 'admin');
-  final _passwordController = TextEditingController(text: 'admin');
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
   bool _obscurePassword = true;
   bool _rememberMe = true;
   bool _isLoading = false;
@@ -40,6 +40,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   void _handleSignIn({bool isDemo = false}) async {
     final serverConfig = ref.read(serverConfigProvider);
+    if (!isDemo &&
+        (_emailController.text.trim().isEmpty || _passwordController.text.isEmpty)) {
+      setState(() => _errorMessage = 'Enter your username and password.');
+      return;
+    }
 
     setState(() {
       _isLoading = true;
@@ -51,7 +56,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         serverUrl: serverConfig.serverUrl,
         database: serverConfig.database,
         email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
+        // Passwords are sent verbatim (leading/trailing spaces are valid).
+        password: _passwordController.text,
         isDemo: isDemo,
         enforceHttps: serverConfig.enforceHttps,
       );
@@ -253,7 +259,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Or Instant Demo Profiles (1-Tap)', style: FlexTypography.headlineMd),
+                  Expanded(
+                    child: Text('Or Instant Demo Profiles (1-Tap)', style: FlexTypography.headlineMd),
+                  ),
+                  const SizedBox(width: 8),
                   const FlexBadge(text: 'OFFLINE SANDBOX', variant: FlexBadgeVariant.info),
                 ],
               ),

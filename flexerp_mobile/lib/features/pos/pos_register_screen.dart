@@ -8,11 +8,14 @@ import '../../core/widgets/flex_button.dart';
 import '../../core/widgets/flex_app_bar.dart';
 import '../../core/localization/lk_formatters.dart';
 import '../../data/models/pos_order.dart';
+import '../../data/models/vendor_model.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/pos_repository.dart';
 import '../../data/repositories/partner_repository.dart';
 import '../../data/repositories/vendor_repository.dart';
 import '../../data/repositories/vendor_inventory_repository.dart';
+import '../../core/api/odoo_client.dart';
+import '../../core/widgets/barcode_camera_view.dart';
 import 'pos_tender_screen.dart';
 
 class PosRegisterScreen extends ConsumerStatefulWidget {
@@ -24,7 +27,7 @@ class PosRegisterScreen extends ConsumerStatefulWidget {
 
 class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
   String _selectedCategory = 'All';
-  final List<String> _categories = ['All', 'Safety & PPE', 'Hand Tools', 'Power Tools', 'Electrical', 'Hardware'];
+  List<String> _categories = const ['All'];
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _desktopBarcodeCtrl = TextEditingController();
   String _searchQuery = '';
@@ -32,6 +35,14 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
   int? _selectedPartnerId;
   String _selectedPartnerName = 'Walk-in';
   bool _createInvoice = false;
+  bool _sessionLoading = false;
+  String? _sessionError;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_ensureLiveSession);
+  }
 
   @override
   void dispose() {
@@ -45,9 +56,24 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
     return p == TargetPlatform.macOS || p == TargetPlatform.windows || p == TargetPlatform.linux;
   }
 
-  void _onBarcodeScan(String barcode) {
+  Future<void> _onBarcodeScan(String barcode) async {
     final invNotifier = ref.read(vendorInventoryProvider.notifier);
-    final product = invNotifier.findByBarcode(barcode.trim());
+    VendorProduct? product;
+    try {
+      // Local O(1) index first, then the server barcode lookup (live).
+      product = await invNotifier.lookupBarcodeLive(barcode.trim());
+    } catch (e) {
+      debugPrint('FlexERP: POS barcode lookup failed for $barcode: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Barcode lookup failed: ${describeError(e)}'),
+          backgroundColor: FlexColors.danger,
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
     if (product != null) {
       if (product.stockOnHand <= 0) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -96,15 +122,18 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
 
   void _openBarcodeScannerModal() {
     final inventory = ref.read(vendorInventoryProvider);
+    final isLive = _isLive;
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: FlexColors.surfaceDark,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
         final manualCodeCtrl = TextEditingController();
-        return Padding(
+        return SingleChildScrollView(
+          child: Padding(
           padding: EdgeInsets.only(
             left: 20,
             right: 20,
@@ -145,37 +174,17 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-              // Camera optical simulation viewfinder
-              Container(
-                height: 110,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: Colors.black,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: FlexColors.primaryLight.withOpacity(0.6), width: 1.5),
-                ),
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    const Icon(Icons.videocam_outlined, color: Colors.white24, size: 48),
-                    Container(
-                      height: 2,
-                      width: double.infinity,
-                      margin: const EdgeInsets.symmetric(horizontal: 24),
-                      color: FlexColors.danger.withOpacity(0.85),
-                    ),
-                    const Positioned(
-                      bottom: 8,
-                      child: Text(
-                        'READY • Point camera at 1D / 2D barcode',
-                        style: TextStyle(color: Colors.white70, fontSize: 10, letterSpacing: 0.5),
-                      ),
-                    ),
-                  ],
-                ),
+              // Live camera viewfinder (mobile_scanner)
+              BarcodeCameraView(
+                height: 200,
+                onDetected: (code) {
+                  Navigator.pop(ctx);
+                  _onBarcodeScan(code);
+                },
               ),
+              if (!isLive) ...[
               const SizedBox(height: 16),
-              const Text('Quick Test Barcodes:', style: TextStyle(color: FlexColors.textSecondaryDark, fontSize: 12, fontWeight: FontWeight.w600)),
+              const Text('Quick Test Barcodes (demo):', style: TextStyle(color: FlexColors.textSecondaryDark, fontSize: 12, fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
@@ -193,6 +202,7 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
                   );
                 }).toList(),
               ),
+              ],
               const SizedBox(height: 16),
               Row(
                 children: [
@@ -230,9 +240,43 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
               ),
             ],
           ),
+        ),
         );
       },
     );
+  }
+
+  bool get _isLive {
+    final user = ref.read(currentUserProvider);
+    return user != null && !user.isDemo;
+  }
+
+  /// Opens (or re-attaches to) the real Odoo POS session for live users.
+  Future<void> _ensureLiveSession({bool force = false}) async {
+    if (!_isLive) return;
+    final session = ref.read(posSessionProvider);
+    if (session.isLiveOpen && !force) return;
+    setState(() {
+      _sessionLoading = true;
+      _sessionError = null;
+    });
+    try {
+      await ref.read(posSessionProvider.notifier).openLiveSession(configId: session.configId);
+    } catch (e) {
+      debugPrint('FlexERP: POS session open failed: $e');
+      if (mounted) setState(() => _sessionError = describeError(e));
+    } finally {
+      if (mounted) setState(() => _sessionLoading = false);
+    }
+  }
+
+  /// Returns a reason checkout is blocked, or null when selling is allowed.
+  String? _checkoutBlockReason() {
+    if (!_isLive) return null;
+    final session = ref.read(posSessionProvider);
+    if (session.isLiveOpen) return null;
+    if (_sessionLoading) return 'POS session is still opening — please wait.';
+    return 'No open POS session. ${_sessionError ?? 'Tap "Open session" to start selling.'}';
   }
 
   @override
@@ -243,6 +287,13 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
     final cart = ref.watch(posCartProvider);
     final cartTotal = ref.watch(posCartProvider.notifier).totalAmount;
     final cartItemCount = ref.watch(posCartProvider.notifier).totalItemCount;
+
+    // Company / user switch resets the live session → re-attach automatically.
+    ref.listen(posSessionProvider, (prev, next) {
+      if (_isLive && next.state == PosShiftSession.stateNone && prev?.state != PosShiftSession.stateNone) {
+        Future.microtask(_ensureLiveSession);
+      }
+    });
 
     // Listen to real-time vendor inventory events
     ref.listen(vendorStockEventStreamProvider, (prev, next) {
@@ -258,6 +309,14 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
         });
       });
     });
+
+    _categories = [
+      'All',
+      ...{for (final p in products) if (p.category.isNotEmpty) p.category},
+    ];
+    if (!_categories.contains(_selectedCategory)) _selectedCategory = 'All';
+    final session = ref.watch(posSessionProvider);
+    final isLive = _isLive;
 
     final filteredProducts = products.where((p) {
       final matchesCategory = _selectedCategory == 'All' || p.category == _selectedCategory;
@@ -279,6 +338,43 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
         children: [
           Column(
             children: [
+              if (isLive && !session.isLiveOpen)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  color: (_sessionError != null ? FlexColors.danger : FlexColors.warning).withOpacity(0.15),
+                  child: Row(
+                    children: [
+                      if (_sessionLoading)
+                        const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      else
+                        Icon(
+                          Icons.point_of_sale,
+                          size: 18,
+                          color: _sessionError != null ? FlexColors.danger : FlexColors.warning,
+                        ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _sessionLoading
+                              ? 'Opening POS session in Odoo…'
+                              : 'No open POS session — checkout disabled.'
+                                  '${_sessionError != null ? '\n$_sessionError' : ''}',
+                          style: const TextStyle(fontSize: 12, color: Colors.white),
+                        ),
+                      ),
+                      if (!_sessionLoading)
+                        TextButton(
+                          onPressed: () => _ensureLiveSession(force: true),
+                          child: const Text('Open session'),
+                        ),
+                    ],
+                  ),
+                ),
               // Live Stock Sync Notification Bar
               if (_lastLiveSyncNotice != null)
                 AnimatedContainer(
@@ -705,6 +801,13 @@ class _PosRegisterScreenState extends ConsumerState<PosRegisterScreen> {
                       onPressed: cart.isEmpty
                           ? null
                           : () {
+                              final blocked = _checkoutBlockReason();
+                              if (blocked != null) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(blocked), backgroundColor: FlexColors.danger),
+                                );
+                                return;
+                              }
                               Navigator.pop(context);
                               Navigator.push(
                                 context,

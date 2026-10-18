@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import '../../core/api/odoo_client.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'auth_repository.dart';
 
@@ -35,7 +37,7 @@ class PurchaseOrdersNotifier extends Notifier<List<PurchaseOrderSummary>> {
       final rows = await api.purchaseOrders();
       state = rows.map((r) {
         return PurchaseOrderSummary(
-          id: r['id'] as int? ?? 0,
+          id: parseOdooInt(r['id']) ?? 0,
           name: r['name']?.toString() ?? 'PO',
           partnerName: r['partner_name']?.toString() ?? 'Vendor',
           amountTotal: (r['amount_total'] as num?)?.toDouble() ?? 0,
@@ -43,7 +45,8 @@ class PurchaseOrdersNotifier extends Notifier<List<PurchaseOrderSummary>> {
           dateOrder: DateTime.tryParse(r['date_order']?.toString() ?? '') ?? DateTime.now(),
         );
       }).toList();
-    } catch (_) {
+    } catch (e) {
+      debugPrint('FlexERP: purchase order sync failed: $e');
       rethrow; // surface module_not_installed / feature-disabled to UI
     }
   }

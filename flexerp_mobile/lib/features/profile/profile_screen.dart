@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/api/odoo_client.dart';
 import '../../core/theme/flex_colors.dart';
 import '../../core/theme/flex_typography.dart';
 import '../../core/widgets/flex_card.dart';
@@ -8,6 +9,7 @@ import '../../core/widgets/flex_button.dart';
 import '../../core/widgets/flex_app_bar.dart';
 import '../../data/models/auth_user.dart';
 import '../../data/repositories/auth_repository.dart';
+import 'offline_queue_screen.dart';
 
 class ProfileScreen extends ConsumerWidget {
   final VoidCallback onLogout;
@@ -32,7 +34,17 @@ class ProfileScreen extends ConsumerWidget {
           if (user != null && !user.isDemo) {
             try {
               await ref.read(currentUserProvider.notifier).switchCompany(branch.id);
-            } catch (_) {}
+            } catch (e) {
+              debugPrint('FlexERP: company switch failed: $e');
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Company switch failed: ${describeError(e)}'),
+                    backgroundColor: FlexColors.danger,
+                  ),
+                );
+              }
+            }
           }
         },
       ),
@@ -196,6 +208,11 @@ class ProfileScreen extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 24),
+
+            if (user != null && !user.isDemo) ...[
+              const OfflineQueueEntryTile(),
+              const SizedBox(height: 16),
+            ],
 
             // Logout Button
             FlexButton(

@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show SocketException, HttpException;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -7,10 +9,51 @@ class OdooException implements Exception {
   final int? code;
   final dynamic data;
 
-  OdooException(this.message, {this.code, this.data});
+  /// True when the request never got a JSON-RPC answer from Odoo
+  /// (socket/DNS failure, timeout, HTTP 5xx without a JSON-RPC error body).
+  /// Only these failures may be queued for offline replay.
+  final bool isNetworkError;
+
+  /// Odoo exception class from `error.data.name`
+  /// (e.g. `odoo.exceptions.UserError`, `odoo.exceptions.AccessError`).
+  final String? errorName;
+
+  /// HTTP status code when the failure came from a non-200 response.
+  final int? httpStatus;
+
+  OdooException(
+    this.message, {
+    this.code,
+    this.data,
+    this.isNetworkError = false,
+    this.errorName,
+    this.httpStatus,
+  });
+
+  /// Business / validation / access errors raised by Odoo. These must be
+  /// surfaced to the user and never queued for silent retry.
+  bool get isBusinessError => !isNetworkError;
+
+  bool get isSessionExpired =>
+      errorName?.contains('SessionExpired') == true || code == 100;
 
   @override
   String toString() => 'OdooException: $message (code: $code)';
+}
+
+/// Whether [error] is a transport failure that is safe to queue for replay.
+bool isNetworkFailure(Object error) {
+  if (error is OdooException) return error.isNetworkError;
+  return error is SocketException ||
+      error is TimeoutException ||
+      error is HttpException ||
+      error is http.ClientException;
+}
+
+/// Human readable message for any error (strips the `OdooException:` prefix).
+String describeError(Object error) {
+  if (error is OdooException) return error.message;
+  return error.toString();
 }
 
 class _CacheEntry {
@@ -55,6 +98,21 @@ class OdooClient {
     }
   }
 
+  /// New client instance sharing transport + session + company context
+  /// (empty cache). Used to publish context changes to Riverpod watchers.
+  OdooClient copy() {
+    return OdooClient(
+      baseUrl: baseUrl,
+      sessionId: sessionId,
+      allowedCompanyIds: List<int>.from(allowedCompanyIds),
+      activeCompanyId: activeCompanyId,
+      timeout: timeout,
+      maxRetries: maxRetries,
+      httpClient: _http,
+      cacheTtl: cacheTtl,
+    );
+  }
+
   void invalidateCachePrefix(String prefix) {
     _cache.removeWhere((key, _) => key.contains(prefix));
   }
@@ -84,8 +142,6 @@ class OdooClient {
     } else if (!allowedCompanyIds.contains(companyId)) {
       allowedCompanyIds = [...allowedCompanyIds, companyId];
     }
-    final cids = (allowedCompanyIds.isEmpty ? [companyId] : allowedCompanyIds).join(',');
-    _headers['X-Odoo-Company-Ids'] = cids;
   }
 
   Map<String, dynamic> _companyKwargs([Map<String, dynamic>? kwargs]) {
@@ -102,42 +158,101 @@ class OdooClient {
     return merged;
   }
 
-  Future<http.Response> _post(Uri uri, Map<String, dynamic> payload) async {
+  /// POST a JSON-RPC payload.
+  ///
+  /// Transport failures and bare HTTP 5xx responses are retried only when
+  /// [retry] is true — i.e. for idempotent reads or writes that carry a
+  /// client `uuid` the server deduplicates on. Non-idempotent writes are
+  /// sent exactly once so a slow-but-successful request is never doubled.
+  Future<http.Response> _post(
+    Uri uri,
+    Map<String, dynamic> payload, {
+    bool retry = true,
+  }) async {
+    final attempts = retry ? maxRetries : 0;
     Object? lastError;
-    for (var attempt = 0; attempt <= maxRetries; attempt++) {
+    for (var attempt = 0; attempt <= attempts; attempt++) {
       try {
         final response = await _http
             .post(uri, headers: _headers, body: jsonEncode(payload))
             .timeout(timeout);
-        if (response.statusCode >= 500 && attempt < maxRetries) {
+        if (response.statusCode >= 500 &&
+            attempt < attempts &&
+            _jsonRpcError(response.body) == null) {
           await Future<void>.delayed(Duration(milliseconds: 300 * (attempt + 1)));
           continue;
         }
         return response;
       } catch (e) {
         lastError = e;
-        if (attempt < maxRetries) {
+        if (attempt < attempts) {
           await Future<void>.delayed(Duration(milliseconds: 300 * (attempt + 1)));
           continue;
         }
       }
     }
-    throw OdooException('Network error after retries: $lastError');
+    throw OdooException(
+      lastError is TimeoutException
+          ? 'Request timed out — check your connection'
+          : 'Network error: $lastError',
+      isNetworkError: true,
+    );
+  }
+
+  static Map<String, dynamic>? _jsonRpcError(String body) {
+    if (body.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map && decoded['error'] is Map) {
+        return Map<String, dynamic>.from(decoded['error'] as Map);
+      }
+    } catch (_) {
+      // Not JSON (proxy error page, captive portal…) — caller classifies.
+    }
+    return null;
+  }
+
+  static OdooException _rpcException(Map<String, dynamic> error, {int? httpStatus}) {
+    final data = error['data'];
+    final dataMap = data is Map ? data : null;
+    final message = dataMap?['message']?.toString() ?? error['message']?.toString() ?? 'RPC error';
+    final rawCode = error['code'];
+    return OdooException(
+      message,
+      code: rawCode is int ? rawCode : int.tryParse('${rawCode ?? ''}'),
+      data: data,
+      errorName: dataMap?['name']?.toString(),
+      httpStatus: httpStatus,
+    );
   }
 
   dynamic _decodeResult(http.Response response) {
-    if (response.statusCode != 200) {
-      throw OdooException('HTTP ${response.statusCode}: ${response.reasonPhrase}');
+    final rpcError = _jsonRpcError(response.body);
+    if (rpcError != null) {
+      // Odoo answered with a JSON-RPC error (UserError, ValidationError,
+      // AccessError, …) — a business failure, never a network one.
+      throw _rpcException(rpcError, httpStatus: response.statusCode);
     }
-    final decoded = jsonDecode(response.body);
-    if (decoded['error'] != null) {
+    if (response.statusCode != 200) {
       throw OdooException(
-        decoded['error']['data']?['message'] ??
-            decoded['error']['message'] ??
-            'RPC error',
-        code: decoded['error']['code'],
-        data: decoded['error']['data'],
+        'HTTP ${response.statusCode}: ${response.reasonPhrase ?? 'error'}',
+        httpStatus: response.statusCode,
+        // Gateway / upstream failures without an Odoo answer are transient.
+        isNetworkError: response.statusCode >= 500,
       );
+    }
+    final dynamic decoded;
+    try {
+      decoded = jsonDecode(response.body);
+    } on FormatException {
+      throw OdooException(
+        'Unexpected non-JSON response from server',
+        httpStatus: response.statusCode,
+        isNetworkError: true,
+      );
+    }
+    if (decoded is! Map) {
+      throw OdooException('Malformed JSON-RPC response');
     }
     return decoded['result'];
   }
@@ -166,10 +281,11 @@ class OdooClient {
         throw OdooException(
           'Web CORS Error: Browser blocked request to $baseUrl. '
           'Enable CORS on Odoo or use the Sri Lanka Demo Sandbox.',
+          isNetworkError: true,
         );
       }
       if (e is OdooException) rethrow;
-      throw OdooException('Connection failed: $e');
+      throw OdooException('Connection failed: $e', isNetworkError: true);
     }
   }
 
@@ -187,7 +303,9 @@ class OdooClient {
         return List<String>.from(result);
       }
       return [];
-    } catch (_) {
+    } catch (e) {
+      // Database listing is often disabled (list_db = False); not fatal.
+      debugPrint('FlexERP: database list unavailable: $e');
       return [];
     }
   }
@@ -258,10 +376,14 @@ class OdooClient {
   /// Call a FlexERP / Odoo JSON-RPC controller route (e.g. /flexerp/mobile/bootstrap).
   ///
   /// Pass [cacheKey] for short TTL caching of read-heavy list endpoints.
+  /// Transport retries happen only when [idempotent] is true, a [cacheKey]
+  /// is given (reads), or the params carry a client `uuid` the server
+  /// deduplicates on.
   Future<dynamic> callRoute(
     String path, [
     Map<String, dynamic> params = const {},
     String? cacheKey,
+    bool idempotent = false,
   ]) async {
     if (cacheKey != null) {
       final hit = _cache[cacheKey];
@@ -269,18 +391,39 @@ class OdooClient {
     }
     final normalized = path.startsWith('/') ? path : '/$path';
     final uri = Uri.parse('$baseUrl$normalized');
-    final response = await _post(uri, {
-      'jsonrpc': '2.0',
-      'method': 'call',
-      'params': params,
-      'id': DateTime.now().millisecondsSinceEpoch,
-    });
+    final uuid = params['uuid'];
+    final canRetry = idempotent ||
+        cacheKey != null ||
+        (uuid is String && uuid.isNotEmpty);
+    final response = await _post(
+      uri,
+      {
+        'jsonrpc': '2.0',
+        'method': 'call',
+        'params': params,
+        'id': DateTime.now().millisecondsSinceEpoch,
+      },
+      retry: canRetry,
+    );
     final result = _decodeResult(response);
     if (cacheKey != null) {
       _cache[cacheKey] = _CacheEntry(result, DateTime.now().add(cacheTtl));
     }
     return result;
   }
+
+  /// ORM methods that never mutate data and are therefore safe to retry.
+  static const Set<String> readOnlyOrmMethods = {
+    'search_read',
+    'read',
+    'search',
+    'search_count',
+    'name_search',
+    'fields_get',
+    'read_group',
+    'web_search_read',
+    'web_read',
+  };
 
   Future<dynamic> callKw({
     required String model,
@@ -289,17 +432,21 @@ class OdooClient {
     Map<String, dynamic> kwargs = const {},
   }) async {
     final uri = Uri.parse('$baseUrl/web/dataset/call_kw');
-    final response = await _post(uri, {
-      'jsonrpc': '2.0',
-      'method': 'call',
-      'params': {
-        'model': model,
-        'method': method,
-        'args': args,
-        'kwargs': _companyKwargs(kwargs),
+    final response = await _post(
+      uri,
+      {
+        'jsonrpc': '2.0',
+        'method': 'call',
+        'params': {
+          'model': model,
+          'method': method,
+          'args': args,
+          'kwargs': _companyKwargs(kwargs),
+        },
+        'id': DateTime.now().millisecondsSinceEpoch,
       },
-      'id': DateTime.now().millisecondsSinceEpoch,
-    });
+      retry: readOnlyOrmMethods.contains(method),
+    );
     return _decodeResult(response);
   }
 
@@ -333,7 +480,7 @@ class OdooClient {
   }) async {
     final res = await callKw(model: model, method: 'create', args: [values]);
     if (res is int) return res;
-    if (res is List && res.isNotEmpty) return res.first as int;
+    if (res is List && res.isNotEmpty) return parseOdooInt(res.first) ?? 0;
     return 0;
   }
 
@@ -355,6 +502,22 @@ class OdooClient {
     return callKw(model: model, method: method, args: [ids], kwargs: kwargs);
   }
 
+  /// Hosts used during local development (emulator loopback included).
+  static const Set<String> devHosts = {'localhost', '127.0.0.1', '10.0.2.2', '::1', '[::1]'};
+
+  static String _hostOf(String raw) {
+    var url = raw.trim();
+    if (url.isEmpty) return '';
+    if (!url.contains('://')) url = 'http://$url';
+    return Uri.tryParse(url)?.host ?? '';
+  }
+
+  /// True for localhost / loopback / Android-emulator host addresses.
+  static bool isDevHost(String rawUrl) => devHosts.contains(_hostOf(rawUrl));
+
+  /// HTTPS is enforced by default for every host except local dev hosts.
+  static bool defaultEnforceHttps(String rawUrl) => !isDevHost(rawUrl);
+
   static String normalizeUrl(String raw, {required bool enforceHttps}) {
     var url = raw.trim();
     if (url.isEmpty) return url;
@@ -364,20 +527,36 @@ class OdooClient {
     if (enforceHttps && url.startsWith('http://')) {
       url = 'https://${url.substring('http://'.length)}';
     }
-    if (url.endsWith('/')) url = url.substring(0, url.length - 1);
+    while (url.endsWith('/')) {
+      url = url.substring(0, url.length - 1);
+    }
     return url;
   }
 
   static void assertUrlAllowed(String url, {required bool enforceHttps, required bool isRelease}) {
     final uri = Uri.tryParse(url);
-    if (uri == null || !uri.hasScheme) {
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
       throw OdooException('Invalid server URL');
+    }
+    if (uri.scheme != 'https' && uri.scheme != 'http') {
+      throw OdooException('Unsupported URL scheme: ${uri.scheme}');
     }
     if (enforceHttps && uri.scheme != 'https') {
       throw OdooException('HTTPS is required. Enable HTTPS or disable Enforce HTTPS.');
     }
-    if (isRelease && uri.scheme != 'https' && uri.host != 'localhost' && uri.host != '127.0.0.1') {
+    if (isRelease && uri.scheme != 'https' && !devHosts.contains(uri.host)) {
       throw OdooException('Release builds require HTTPS for remote servers.');
     }
   }
+}
+
+/// Safe int parsing for Odoo JSON values (int, num, numeric string,
+/// many2one `[id, name]` pairs). Returns null for `false`/null/garbage.
+int? parseOdooInt(dynamic value) {
+  if (value == null || value == false) return null;
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  if (value is String) return int.tryParse(value.trim());
+  if (value is List && value.isNotEmpty) return parseOdooInt(value.first);
+  return null;
 }

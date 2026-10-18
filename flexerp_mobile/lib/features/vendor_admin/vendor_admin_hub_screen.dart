@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/api/odoo_client.dart';
 import '../../core/theme/flex_colors.dart';
 import '../../core/theme/flex_typography.dart';
 import '../../core/widgets/flex_app_bar.dart';
@@ -58,7 +59,13 @@ class _VendorAdminHubScreenState extends ConsumerState<VendorAdminHubScreen> {
       try {
         await ref.read(executiveKpisProvider.notifier).syncFromServer();
         await ref.read(saleOrdersProvider.notifier).syncFromOdoo();
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('FlexERP: vendor admin hub sync failed: $e');
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Sync failed: ${describeError(e)}'), backgroundColor: FlexColors.danger),
+        );
+      }
     });
   }
 

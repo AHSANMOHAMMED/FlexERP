@@ -7,6 +7,7 @@ import '../../core/theme/flex_typography.dart';
 import '../../core/widgets/flex_card.dart';
 import '../../core/widgets/flex_badge.dart';
 import '../../core/widgets/flex_app_bar.dart';
+import '../../core/api/odoo_client.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/hr_repository.dart';
 
@@ -129,14 +130,14 @@ class _AttendanceKioskScreenState extends ConsumerState<AttendanceKioskScreen> {
                           Expanded(
                             child: Text(
                               attendance?.geofenceLocationName ??
-                                  'Geofence: ${currentBranch.city} (Colombo HQ if GPS unavailable)',
+                                  'Geofence: ${currentBranch.city}',
                               style: FlexTypography.labelMd,
                             ),
                           ),
                         ],
                       ),
                       FlexBadge(
-                        text: gpsNote != null ? 'GPS DEFAULT' : 'GPS READY',
+                        text: gpsNote != null ? 'CHECK NOTE' : 'GPS READY',
                         variant: gpsNote != null ? FlexBadgeVariant.warning : FlexBadgeVariant.success,
                       ),
                     ],
@@ -150,7 +151,8 @@ class _AttendanceKioskScreenState extends ConsumerState<AttendanceKioskScreen> {
                   ] else ...[
                     const SizedBox(height: 8),
                     Text(
-                      'Check-in uses device GPS when available; otherwise Colombo HQ (6.9271, 79.8612).',
+                      'Check-in records device GPS when available. If location is unavailable '
+                      'the punch is recorded without coordinates and you will be told.',
                       style: FlexTypography.bodySm.copyWith(color: FlexColors.textSecondaryDark),
                     ),
                   ],
@@ -203,34 +205,45 @@ class _AttendanceKioskScreenState extends ConsumerState<AttendanceKioskScreen> {
             // Animated Large Action Button
             GestureDetector(
               onTap: () async {
-                if (isCheckedIn) {
-                  await ref.read(attendanceProvider.notifier).checkOut();
+                try {
+                  if (isCheckedIn) {
+                    await ref.read(attendanceProvider.notifier).checkOut();
+                    if (!context.mounted) return;
+                    final note = ref.read(attendanceGpsNoteProvider);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        backgroundColor: note == null ? null : FlexColors.warning,
+                        content: Text(
+                          note == null
+                              ? 'Successfully Checked Out! Shift recorded.'
+                              : 'Checked out. $note',
+                        ),
+                      ),
+                    );
+                  } else {
+                    await ref.read(attendanceProvider.notifier).checkIn(
+                          employeeName: user?.name ?? 'Employee',
+                          isInsideGeofence: true,
+                        );
+                    if (!context.mounted) return;
+                    final note = ref.read(attendanceGpsNoteProvider);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        backgroundColor: note == null ? FlexColors.success : FlexColors.warning,
+                        content: Text(
+                          note == null
+                              ? 'Successfully Checked In! Location recorded.'
+                              : 'Checked in. $note',
+                        ),
+                      ),
+                    );
+                  }
+                } catch (e) {
                   if (!context.mounted) return;
-                  final note = ref.read(attendanceGpsNoteProvider);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text(
-                        note == null
-                            ? 'Successfully Checked Out! Shift recorded.'
-                            : 'Checked out. $note',
-                      ),
-                    ),
-                  );
-                } else {
-                  await ref.read(attendanceProvider.notifier).checkIn(
-                        employeeName: user?.name ?? 'Employee',
-                        isInsideGeofence: true,
-                      );
-                  if (!context.mounted) return;
-                  final note = ref.read(attendanceGpsNoteProvider);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      backgroundColor: FlexColors.success,
-                      content: Text(
-                        note == null
-                            ? 'Successfully Checked In! Geofence verified.'
-                            : 'Checked in. $note',
-                      ),
+                      backgroundColor: FlexColors.danger,
+                      content: Text('Attendance not recorded: ${describeError(e)}'),
                     ),
                   );
                 }

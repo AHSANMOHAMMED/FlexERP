@@ -1,8 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/account_invoice.dart';
 import '../mock/mock_sri_lanka_data.dart';
+import '../../core/api/odoo_client.dart';
 import '../../core/offline/offline_queue.dart';
 import 'auth_repository.dart';
+import 'pos_repository.dart' show newPosOrderUuid;
 
 class InvoicesNotifier extends Notifier<List<AccountInvoice>> {
   @override
@@ -44,11 +47,15 @@ class InvoicesNotifier extends Notifier<List<AccountInvoice>> {
         );
       }).toList();
     } catch (e) {
+      debugPrint('FlexERP: invoice sync failed: $e');
       rethrow;
     }
   }
 
-  Future<void> registerPayment(
+  /// Registers a payment. Returns `true` when the payment was queued
+  /// offline (network failure) instead of being accepted by the server.
+  /// Odoo business errors are rethrown and never queued.
+  Future<bool> registerPayment(
     int invoiceId,
     double paymentAmount, {
     String? memo,
@@ -56,13 +63,17 @@ class InvoicesNotifier extends Notifier<List<AccountInvoice>> {
   }) async {
     final user = ref.read(currentUserProvider);
     final api = ref.read(flexerpApiProvider);
-    if (user != null && !user.isDemo && api != null) {
+    if (user != null && !user.isDemo) {
+      if (api == null) throw OdooException('Not signed in to Odoo');
+      // Server dedups on this uuid, so retries and offline replays are safe.
+      final paymentUuid = newPosOrderUuid();
       try {
         final result = await api.registerPayment(
           moveId: invoiceId,
           amount: paymentAmount,
           journalId: journalId,
           memo: memo,
+          uuid: paymentUuid,
         );
         final residual = (result['amount_residual'] as num?)?.toDouble();
         final paymentState = result['payment_state']?.toString();
@@ -87,18 +98,21 @@ class InvoicesNotifier extends Notifier<List<AccountInvoice>> {
             else
               inv
         ];
-        return;
+        return false;
       } catch (e) {
+        if (!isNetworkFailure(e)) rethrow;
         await ref.read(offlineQueueProvider.notifier).enqueue(
               type: 'payment_register',
               payload: {
                 'move_id': invoiceId,
+                'uuid': paymentUuid,
                 'amount': paymentAmount,
                 'memo': memo,
                 if (journalId != null) 'journal_id': journalId,
               },
             );
-        rethrow;
+        // Invoice residual is NOT changed locally until the server accepts it.
+        return true;
       }
     }
 
@@ -122,6 +136,7 @@ class InvoicesNotifier extends Notifier<List<AccountInvoice>> {
         else
           inv
     ];
+    return false;
   }
 }
 

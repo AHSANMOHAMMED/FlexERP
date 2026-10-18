@@ -50,11 +50,11 @@ class SaleOrder {
     return sum * (1 - (globalDiscountPercent / 100));
   }
 
-  // Sri Lanka standard 18% VAT
-  double get vatAmount => untaxedAmount * 0.18;
-
-  // Sri Lanka 2.5% SSCL
+  // Sri Lanka 2.5% SSCL (levied first)
   double get ssclAmount => untaxedAmount * 0.025;
+
+  // Sri Lanka standard 18% VAT charged on (value + SSCL)
+  double get vatAmount => (untaxedAmount + ssclAmount) * 0.18;
 
   double get totalAmount => untaxedAmount + vatAmount + ssclAmount;
 }

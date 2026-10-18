@@ -6,6 +6,7 @@ import '../../core/widgets/flex_card.dart';
 import '../../core/widgets/flex_badge.dart';
 import '../../core/widgets/flex_button.dart';
 import '../../core/widgets/flex_app_bar.dart';
+import '../../core/api/odoo_client.dart';
 import '../../data/models/stock_picking.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/warehouse_repository.dart';
@@ -28,7 +29,14 @@ class StockPickingScreen extends ConsumerWidget {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Syncing Stock Pickings with Odoo...')),
           );
-          await ref.read(stockPickingsProvider.notifier).syncFromOdoo();
+          try {
+            await ref.read(stockPickingsProvider.notifier).syncFromOdoo();
+          } catch (e) {
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Sync failed: ${describeError(e)}'), backgroundColor: FlexColors.danger),
+            );
+          }
         },
       ),
       body: pickings.isEmpty
@@ -107,6 +115,27 @@ class _PickingOrderCard extends ConsumerWidget {
           // Line Items Checklist
           Text('Pick Checklist', style: FlexTypography.labelSm),
           const SizedBox(height: 8),
+          if (!picking.linesLoaded)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                icon: const Icon(Icons.download, size: 18),
+                label: const Text('Load pick lines'),
+                onPressed: () async {
+                  try {
+                    await ref.read(stockPickingsProvider.notifier).loadPickingDetail(picking.id);
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Could not load ${picking.name}: ${describeError(e)}'),
+                        backgroundColor: FlexColors.danger,
+                      ),
+                    );
+                  }
+                },
+              ),
+            ),
           ...picking.lines.map((line) {
             return Container(
               margin: const EdgeInsets.only(bottom: 8),
@@ -174,14 +203,25 @@ class _PickingOrderCard extends ConsumerWidget {
               variant: picking.canValidate ? FlexButtonVariant.primary : FlexButtonVariant.secondary,
               height: 42,
               onPressed: picking.canValidate
-                  ? () {
-                      ref.read(stockPickingsProvider.notifier).validatePicking(picking.id);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          backgroundColor: FlexColors.success,
-                          content: Text('${picking.name} successfully validated and shipped!'),
-                        ),
-                      );
+                  ? () async {
+                      try {
+                        await ref.read(stockPickingsProvider.notifier).validatePicking(picking.id);
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            backgroundColor: FlexColors.success,
+                            content: Text('${picking.name} successfully validated and shipped!'),
+                          ),
+                        );
+                      } catch (e) {
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            backgroundColor: FlexColors.danger,
+                            content: Text('Validation failed: ${describeError(e)}'),
+                          ),
+                        );
+                      }
                     }
                   : () {
                       ScaffoldMessenger.of(context).showSnackBar(

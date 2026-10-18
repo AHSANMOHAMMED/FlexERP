@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../api/odoo_client.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/executive_repository.dart';
 import '../../data/repositories/pos_repository.dart';
@@ -26,6 +28,34 @@ class LiveSyncState {
   });
 }
 
+/// Cursor maths for `/flexerp/mobile/live/poll`.
+///
+/// * The server reports the newest id as `latest_id` (or `last_id`).
+/// * With `since_id == 0` the server returns no events, only the current
+///   `last_id` — the client adopts it as its starting cursor and processes
+///   nothing (avoids replaying history on first launch).
+/// * The cursor never moves backwards.
+({int nextId, List<Map<String, dynamic>> events}) computeLiveCursor(
+  int sinceId,
+  Map<String, dynamic> result,
+) {
+  final rawEvents = (result['events'] as List?) ?? const [];
+  final events = <Map<String, dynamic>>[
+    for (final e in rawEvents)
+      if (e is Map) Map<String, dynamic>.from(e),
+  ];
+  var next = parseOdooInt(result['latest_id']) ?? parseOdooInt(result['last_id']) ?? sinceId;
+  for (final e in events) {
+    final id = parseOdooInt(e['id']);
+    if (id != null && id > next) next = id;
+  }
+  if (next < sinceId) next = sinceId;
+  if (sinceId <= 0) {
+    return (nextId: next, events: const <Map<String, dynamic>>[]);
+  }
+  return (nextId: next, events: events);
+}
+
 class LiveSyncNotifier extends Notifier<LiveSyncState> {
   Timer? _timer;
   bool _polling = false;
@@ -36,6 +66,22 @@ class LiveSyncNotifier extends Notifier<LiveSyncState> {
   @override
   LiveSyncState build() {
     ref.onDispose(() => _timer?.cancel());
+    // Logout / tenant switch: stop polling and restart from the cursor the
+    // new bootstrap reported.
+    ref.listen(
+      currentUserProvider.select((u) => (u?.uid, u?.companyId, u?.serverUrl, u?.isDemo)),
+      (prev, next) {
+        if (prev == next) return;
+        if (next.$1 == null || next.$4 == true) {
+          _timer?.cancel();
+          state = LiveSyncState(running: false, foreground: state.foreground);
+          return;
+        }
+        if (state.running) {
+          start(fromEventId: ref.read(currentUserProvider.notifier).liveStartEventId, reset: true);
+        }
+      },
+    );
     return const LiveSyncState();
   }
 
@@ -52,10 +98,13 @@ class LiveSyncNotifier extends Notifier<LiveSyncState> {
     }
   }
 
-  void start() {
+  /// Starts polling. [fromEventId] is bootstrap's `live_last_event_id`;
+  /// when unknown the first poll uses since_id=0 to fetch the cursor only.
+  void start({int? fromEventId, bool reset = false}) {
     _timer?.cancel();
+    final cursor = fromEventId ?? (reset ? 0 : state.latestId);
     state = LiveSyncState(
-      latestId: state.latestId,
+      latestId: cursor,
       running: true,
       foreground: state.foreground,
     );
@@ -99,9 +148,11 @@ class LiveSyncNotifier extends Notifier<LiveSyncState> {
     _polling = true;
     try {
       final features = ref.read(currentVendorFeaturesProvider);
-      final result = await api.livePoll(sinceId: state.latestId);
-      final events = (result['events'] as List?) ?? const [];
-      final latest = result['latest_id'] as int? ?? state.latestId;
+      final sinceId = state.latestId;
+      final result = await api.livePoll(sinceId: sinceId);
+      final cursor = computeLiveCursor(sinceId, result);
+      final latest = cursor.nextId;
+      final events = cursor.events;
       if (events.isEmpty) {
         state = LiveSyncState(
           latestId: latest,
@@ -115,7 +166,7 @@ class LiveSyncNotifier extends Notifier<LiveSyncState> {
       var needSales = false;
       var needInvoice = false;
       for (final raw in events) {
-        final type = (raw as Map)['type']?.toString();
+        final type = raw['type']?.toString();
         if (type == 'stock' || type == 'sale') needStock = true;
         if (type == 'sale') needSales = true;
         if (type == 'invoice' || type == 'payment') needInvoice = true;
@@ -152,6 +203,7 @@ class LiveSyncNotifier extends Notifier<LiveSyncState> {
         foreground: state.foreground,
       );
     } catch (e) {
+      debugPrint('FlexERP: live poll failed: $e');
       final nextBackoff = (state.backoffSeconds == 0
               ? 4
               : (state.backoffSeconds * 2).clamp(4, 60))
@@ -185,7 +237,12 @@ class LiveSyncNotifier extends Notifier<LiveSyncState> {
       if (type == 'invoice' && features.enableInvoicing) {
         tasks.add(ref.read(invoicesProvider.notifier).syncFromOdoo());
       }
-      if (tasks.isNotEmpty) await Future.wait(tasks);
+      if (tasks.isEmpty) return;
+      try {
+        await Future.wait(tasks);
+      } catch (e) {
+        debugPrint('FlexERP: local refresh after $type failed: $e');
+      }
     });
   }
 }

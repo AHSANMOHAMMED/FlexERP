@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/flex_colors.dart';
@@ -31,7 +32,10 @@ class _ServerConnectionScreenState extends ConsumerState<ServerConnectionScreen>
   String? _errorMessage;
   List<String> _databases = ['flexerp_production_lk', 'flexcorp_demo_db'];
   String _selectedDatabase = 'flexerp_production_lk';
-  bool _enforceHttps = false;
+  bool _enforceHttps = true;
+
+  /// Once the user flips the switch we stop auto-deriving it from the host.
+  bool _httpsTouched = false;
 
   @override
   void initState() {
@@ -39,6 +43,15 @@ class _ServerConnectionScreenState extends ConsumerState<ServerConnectionScreen>
     final config = ref.read(serverConfigProvider);
     _serverUrlController = TextEditingController(text: config.serverUrl);
     _selectedDatabase = config.database;
+    // HTTPS by default, except for localhost / 127.0.0.1 / 10.0.2.2 dev hosts.
+    _enforceHttps = OdooClient.defaultEnforceHttps(config.serverUrl);
+    _serverUrlController.addListener(_onUrlChanged);
+  }
+
+  void _onUrlChanged() {
+    if (_httpsTouched) return;
+    final next = OdooClient.defaultEnforceHttps(_serverUrlController.text);
+    if (next != _enforceHttps) setState(() => _enforceHttps = next);
   }
 
   @override
@@ -61,7 +74,7 @@ class _ServerConnectionScreenState extends ConsumerState<ServerConnectionScreen>
       OdooClient.assertUrlAllowed(
         normalized,
         enforceHttps: _enforceHttps,
-        isRelease: false,
+        isRelease: kReleaseMode,
       );
       final client = OdooClient(baseUrl: normalized);
       final pingResult = await client.ping();
@@ -114,7 +127,7 @@ class _ServerConnectionScreenState extends ConsumerState<ServerConnectionScreen>
       OdooClient.assertUrlAllowed(
         normalized,
         enforceHttps: _enforceHttps,
-        isRelease: false,
+        isRelease: kReleaseMode,
       );
       ref.read(serverConfigProvider.notifier).updateConfig(
         serverUrl: normalized,
@@ -215,7 +228,9 @@ class _ServerConnectionScreenState extends ConsumerState<ServerConnectionScreen>
                       ),
                     ),
                     const SizedBox(height: 10),
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
                       children: [
                         ActionChip(
                           label: const Text('Local (8069)', style: TextStyle(fontSize: 11)),
@@ -224,7 +239,6 @@ class _ServerConnectionScreenState extends ConsumerState<ServerConnectionScreen>
                             setState(() => _serverUrlController.text = 'http://localhost:8069');
                           },
                         ),
-                        const SizedBox(width: 8),
                         ActionChip(
                           label: const Text('127.0.0.1:8069', style: TextStyle(fontSize: 11)),
                           backgroundColor: FlexColors.surfaceRaisedDark,
@@ -232,7 +246,6 @@ class _ServerConnectionScreenState extends ConsumerState<ServerConnectionScreen>
                             setState(() => _serverUrlController.text = 'http://127.0.0.1:8069');
                           },
                         ),
-                        const SizedBox(width: 8),
                         ActionChip(
                           label: const Text('Cloud Demo', style: TextStyle(fontSize: 11)),
                           backgroundColor: FlexColors.surfaceRaisedDark,
@@ -330,7 +343,10 @@ class _ServerConnectionScreenState extends ConsumerState<ServerConnectionScreen>
                         Switch(
                           value: _enforceHttps,
                           activeColor: FlexColors.primary,
-                          onChanged: (val) => setState(() => _enforceHttps = val),
+                          onChanged: (val) => setState(() {
+                            _httpsTouched = true;
+                            _enforceHttps = val;
+                          }),
                         ),
                       ],
                     ),

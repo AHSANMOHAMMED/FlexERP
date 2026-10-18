@@ -4,17 +4,47 @@ import 'package:intl/intl.dart';
 /// Handles Sri Lankan Rupee (LKR), statutory taxes (VAT 18%, SSCL 2.5%),
 /// NIC numbers, and local contact numbers (+94).
 class LkFormatters {
-  static final NumberFormat _currencyFormat = NumberFormat.currency(
-    locale: 'en_LK',
-    symbol: 'Rs. ',
-    decimalDigits: 2,
-  );
+  static const String defaultSymbol = 'Rs.';
+  static const String defaultCurrencyCode = 'LKR';
 
-  static final NumberFormat _compactCurrencyFormat = NumberFormat.compactCurrency(
-    locale: 'en_LK',
-    symbol: 'Rs. ',
-    decimalDigits: 1,
-  );
+  static String _symbol = defaultSymbol;
+  static String _currencyCode = defaultCurrencyCode;
+
+  static NumberFormat _currencyFormat = _buildCurrency(defaultSymbol);
+  static NumberFormat _compactCurrencyFormat = _buildCompact(defaultSymbol);
+
+  static NumberFormat _buildCurrency(String symbol) => NumberFormat.currency(
+        locale: 'en_LK',
+        symbol: '$symbol ',
+        decimalDigits: 2,
+      );
+
+  static NumberFormat _buildCompact(String symbol) => NumberFormat.compactCurrency(
+        locale: 'en_LK',
+        symbol: '$symbol ',
+        decimalDigits: 1,
+      );
+
+  /// Current currency symbol (server-provided via bootstrap, fallback "Rs.").
+  static String get currencySymbol => _symbol;
+
+  /// Current ISO currency code (server-provided via bootstrap, fallback "LKR").
+  static String get currencyCode => _currencyCode;
+
+  /// Apply the company currency returned by `/flexerp/mobile/bootstrap`.
+  /// Null/empty values fall back to Sri Lankan Rupee defaults.
+  static void configureCurrency({String? symbol, String? code}) {
+    final nextSymbol = (symbol == null || symbol.trim().isEmpty) ? defaultSymbol : symbol.trim();
+    final nextCode = (code == null || code.trim().isEmpty) ? defaultCurrencyCode : code.trim();
+    if (nextSymbol == _symbol && nextCode == _currencyCode) return;
+    _symbol = nextSymbol;
+    _currencyCode = nextCode;
+    _currencyFormat = _buildCurrency(nextSymbol);
+    _compactCurrencyFormat = _buildCompact(nextSymbol);
+  }
+
+  /// Restore the default LKR formatting (used on logout).
+  static void resetCurrency() => configureCurrency();
 
   static final DateFormat _dateFormat = DateFormat('yyyy-MM-dd');
   static final DateFormat _dateTimeFormat = DateFormat('yyyy-MM-dd HH:mm');
@@ -39,17 +69,28 @@ class LkFormatters {
     return _dateTimeFormat.format(dateTime);
   }
 
-  /// Calculates Sri Lankan Value Added Tax (VAT) - Standard 18%
-  static double calculateVat(double taxableAmount) {
-    return taxableAmount * 0.18;
-  }
+  static const double ssclRate = 0.025;
+  static const double vatRate = 0.18;
 
-  /// Calculates Social Security Contribution Levy (SSCL) - 2.5%
+  /// Calculates Social Security Contribution Levy (SSCL) - 2.5% of the value.
   static double calculateSscl(double taxableAmount) {
-    return taxableAmount * 0.025;
+    return taxableAmount * ssclRate;
   }
 
-  /// Calculates Total Sri Lankan taxes (VAT + SSCL = 20.5%)
+  /// Calculates Sri Lankan VAT (18%).
+  ///
+  /// SSCL is levied first and VAT is charged on (value + SSCL), so by default
+  /// the VAT base includes SSCL. Pass [includeSscl] = false for SSCL-exempt supplies.
+  static double calculateVat(double taxableAmount, {bool includeSscl = true}) {
+    final base = includeSscl ? taxableAmount + calculateSscl(taxableAmount) : taxableAmount;
+    return base * vatRate;
+  }
+
+  /// Total Sri Lankan indirect taxes: SSCL + VAT on (value + SSCL)
+  /// = 2.5% + 18% × 1.025 = 20.95% of the value.
+  ///
+  /// Indicative only — for live POS/invoices always display the server's
+  /// `amount_tax` / `amount_total`.
   static double calculateTotalTaxes(double taxableAmount) {
     return calculateVat(taxableAmount) + calculateSscl(taxableAmount);
   }

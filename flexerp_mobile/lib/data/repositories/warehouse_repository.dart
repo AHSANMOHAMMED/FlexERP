@@ -12,6 +12,8 @@ class StockPickingsNotifier extends Notifier<List<StockPicking>> {
     return List.from(MockSriLankaDataService.stockPickings);
   }
 
+  /// Loads the picking list only (one request). Move lines are fetched on
+  /// demand via [loadPickingDetail] — no N+1 detail calls per refresh.
   Future<void> syncFromOdoo() async {
     final user = ref.read(currentUserProvider);
     final api = ref.read(flexerpApiProvider);
@@ -19,47 +21,67 @@ class StockPickingsNotifier extends Notifier<List<StockPicking>> {
     if (api == null) throw OdooException('Not authenticated');
 
     final records = await api.stockPickings();
-    final pickings = <StockPicking>[];
-    final detailErrors = <String>[];
-    for (final rec in records) {
-      List<PickingMoveLine> lines = const [];
-      try {
-        final detail = await api.stockPicking(rec['id'] as int);
-        final rawLines = detail['lines'] as List? ?? [];
-        lines = rawLines.map((line) {
-          final map = Map<String, dynamic>.from(line as Map);
-          return PickingMoveLine(
-            id: map['move_id'] as int? ?? 0,
-            productName: map['product_name']?.toString() ?? 'Product',
-            barcode: map['barcode']?.toString() ?? '',
-            sourceLocation: map['location_src']?.toString() ?? '',
-            expectedQty: (map['product_uom_qty'] as num?)?.toDouble() ?? 0.0,
-            scannedQty: (map['quantity'] as num?)?.toDouble() ?? 0.0,
-          );
-        }).toList();
-      } catch (e) {
-        detailErrors.add('${rec['name'] ?? rec['id']}: $e');
-      }
-      pickings.add(StockPicking(
-        id: rec['id'] as int? ?? 0,
-        name: rec['name']?.toString() ?? 'WH/OUT/000',
-        partnerName: rec['partner']?.toString() ?? 'Warehouse Partner',
-        origin: rec['origin']?.toString() ?? 'Manual',
-        pickingType: rec['picking_type']?.toString() ?? 'Delivery Orders',
-        state: rec['state']?.toString() ?? 'assigned',
-        scheduledDate: rec['scheduled_date'] != null
-            ? DateTime.tryParse(rec['scheduled_date'].toString()) ?? DateTime.now()
-            : DateTime.now(),
-        lines: lines,
-      ));
-    }
-    state = pickings;
-    if (detailErrors.isNotEmpty) {
-      throw OdooException(
-        'Loaded ${pickings.length} pickings; ${detailErrors.length} detail fetch(es) failed. '
-        '${detailErrors.first}',
+    final previous = {for (final p in state) p.id: p};
+    state = [
+      for (final rec in records)
+        if (parseOdooInt(rec['id']) != null)
+          () {
+            final id = parseOdooInt(rec['id'])!;
+            final prior = previous[id];
+            final picking = StockPicking(
+              id: id,
+              name: rec['name']?.toString() ?? 'WH/OUT/000',
+              partnerName: rec['partner']?.toString() ?? 'Warehouse Partner',
+              origin: rec['origin']?.toString() ?? 'Manual',
+              pickingType: rec['picking_type']?.toString() ?? 'Delivery Orders',
+              state: rec['state']?.toString() ?? 'assigned',
+              scheduledDate: rec['scheduled_date'] != null
+                  ? DateTime.tryParse(rec['scheduled_date'].toString()) ?? DateTime.now()
+                  : DateTime.now(),
+              lines: const [],
+              linesLoaded: false,
+            );
+            // Keep already-fetched lines (and local scan progress) if unchanged.
+            if (prior != null && prior.linesLoaded && prior.state == picking.state) {
+              return picking.copyWith(lines: prior.lines, linesLoaded: true);
+            }
+            return picking;
+          }(),
+    ];
+  }
+
+  /// Fetches move lines for one picking (when the user opens it).
+  Future<void> loadPickingDetail(int pickingId, {bool force = false}) async {
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user == null || user.isDemo) return;
+    if (api == null) throw OdooException('Not authenticated');
+    final existing = state.where((p) => p.id == pickingId);
+    if (!force && existing.isNotEmpty && existing.first.linesLoaded) return;
+    final detail = await api.stockPicking(pickingId);
+    final rawLines = detail['lines'] as List? ?? const [];
+    final lines = rawLines.map((line) {
+      final map = Map<String, dynamic>.from(line as Map);
+      return PickingMoveLine(
+        id: parseOdooInt(map['move_id']) ?? parseOdooInt(map['id']) ?? 0,
+        productName: map['product_name']?.toString() ?? 'Product',
+        barcode: map['barcode']?.toString() ?? '',
+        sourceLocation: map['location_src']?.toString() ?? '',
+        expectedQty: (map['product_uom_qty'] as num?)?.toDouble() ?? 0.0,
+        scannedQty: (map['quantity'] as num?)?.toDouble() ?? 0.0,
       );
-    }
+    }).toList();
+    state = [
+      for (final p in state)
+        if (p.id == pickingId)
+          p.copyWith(
+            lines: lines,
+            linesLoaded: true,
+            state: detail['state']?.toString() ?? p.state,
+          )
+        else
+          p
+    ];
   }
 
   void incrementScannedQty(int pickingId, int lineId) {
@@ -117,6 +139,11 @@ class StockPickingsNotifier extends Notifier<List<StockPicking>> {
           else
             p
       ];
+      if (result['requires_action'] == true) {
+        // e.g. lots/serials or zero-quantity confirmation: finish in Odoo.
+        throw OdooException(result['message']?.toString() ??
+            'Additional confirmation is required in the Odoo backend.');
+      }
       return;
     }
 

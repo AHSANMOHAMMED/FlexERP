@@ -10,6 +10,7 @@ import '../../core/theme/flex_typography.dart';
 import '../../core/widgets/flex_button.dart';
 import '../../core/widgets/flex_card.dart';
 import '../../core/localization/lk_formatters.dart';
+import '../../core/api/odoo_client.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/vendor_repository.dart';
 
@@ -48,14 +49,16 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
   }
 
   Future<void> _load() async {
-    final orderId = _result['order_id'] as int?;
+    final orderId = parseOdooInt(_result['order_id']) ?? parseOdooInt(_result['id']);
     final api = ref.read(flexerpApiProvider);
     final user = ref.read(currentUserProvider);
     if (user?.isDemo == true || api == null || orderId == null) {
+      final queued = _result['queued'] == true;
       setState(() {
         _receipt = {
-          'name': _result['name'] ?? 'DEMO/RECEIPT',
+          'name': _result['name'] ?? (queued ? 'PENDING SYNC' : 'DEMO/RECEIPT'),
           'amount_total': _result['amount_total'] ?? 0,
+          if (_result['amount_tax'] != null) 'amount_tax': _result['amount_tax'],
           'partner_name': 'Walk-in',
           'partner_phone': '',
           'lines': const [],
@@ -68,15 +71,30 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
     try {
       final receipt = await api.posOrderReceipt(orderId);
       _phoneCtrl.text = receipt['partner_phone']?.toString() ?? '';
+      if (!mounted) return;
       setState(() {
         _receipt = receipt;
         _loading = false;
       });
     } catch (e) {
+      debugPrint('FlexERP: receipt fetch failed for order $orderId: $e');
+      if (!mounted) return;
+      // The sale itself was accepted — fall back to the push response totals.
       setState(() {
-        _error = e.toString();
+        _receipt = {
+          'name': _result['name'] ?? 'POS/$orderId',
+          'amount_total': _result['amount_total'] ?? 0,
+          if (_result['amount_tax'] != null) 'amount_tax': _result['amount_tax'],
+          'partner_name': _result['partner_name'] ?? 'Walk-in',
+          'lines': const [],
+          'company_name': user?.companyName ?? 'FlexERP',
+        };
+        _error = null;
         _loading = false;
       });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Sale recorded, but receipt details failed to load: ${describeError(e)}')),
+      );
     }
   }
 
@@ -89,8 +107,8 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
       );
       return;
     }
-    final orderId = _result['order_id'] as int?;
-    final invoiceId = _result['invoice_id'] as int? ?? _receipt?['invoice_id'] as int?;
+    final orderId = parseOdooInt(_result['order_id']);
+    final invoiceId = parseOdooInt(_result['invoice_id']) ?? parseOdooInt(_receipt?['invoice_id']);
     if (api == null) {
       final text = Uri.encodeComponent(
         'Receipt ${_receipt?['name']} — ${LkFormatters.formatLkr((_receipt?['amount_total'] as num?)?.toDouble() ?? 0)}',
@@ -103,11 +121,20 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
       );
       return;
     }
-    final result = await api.whatsappSendInvoice(
-      phone: phone,
-      moveId: invoiceId,
-      posOrderId: invoiceId == null ? orderId : null,
-    );
+    final Map<String, dynamic> result;
+    try {
+      result = await api.whatsappSendInvoice(
+        phone: phone,
+        moveId: invoiceId,
+        posOrderId: invoiceId == null ? orderId : null,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('WhatsApp failed: ${describeError(e)}'), backgroundColor: FlexColors.danger),
+      );
+      return;
+    }
     if (!mounted) return;
     final status = result['status']?.toString() ?? 'unknown';
     final waMe = result['wa_me_url']?.toString();
@@ -134,7 +161,7 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
   Future<void> _createInvoice() async {
     final api = ref.read(flexerpApiProvider);
     final features = ref.read(currentVendorFeaturesProvider);
-    final orderId = _result['order_id'] as int?;
+    final orderId = parseOdooInt(_result['order_id']);
     if (!features.enableInvoicing || api == null || orderId == null) return;
     try {
       final inv = await api.invoiceCreateFromPos(orderId);
@@ -156,7 +183,7 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
 
   Future<void> _sharePdf() async {
     final api = ref.read(flexerpApiProvider);
-    final invoiceId = _result['invoice_id'] as int? ?? _receipt?['invoice_id'] as int?;
+    final invoiceId = parseOdooInt(_result['invoice_id']) ?? parseOdooInt(_receipt?['invoice_id']);
     if (api == null || invoiceId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Create a tax invoice first to share branded PDF')),
@@ -193,9 +220,12 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
   @override
   Widget build(BuildContext context) {
     final features = ref.watch(currentVendorFeaturesProvider);
+    // Server totals (pos/order or receipt) are authoritative for live sales.
     final total = (_receipt?['amount_total'] as num?)?.toDouble() ??
         (_result['amount_total'] as num?)?.toDouble() ??
         0;
+    final tax = (_receipt?['amount_tax'] as num?)?.toDouble() ??
+        (_result['amount_tax'] as num?)?.toDouble();
 
     return Scaffold(
       backgroundColor: FlexColors.canvasDark,
@@ -224,6 +254,9 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
                           const SizedBox(height: 12),
                           Text(LkFormatters.formatLkr(total),
                               style: FlexTypography.headlineMd.copyWith(color: FlexColors.primaryLight)),
+                          if (tax != null)
+                            Text('Incl. taxes: ${LkFormatters.formatLkr(tax)}',
+                                style: FlexTypography.bodySm),
                           if (widget.changeDue > 0)
                             Text('Change: ${LkFormatters.formatLkr(widget.changeDue)}',
                                 style: FlexTypography.bodySm),
@@ -236,8 +269,12 @@ class _PosReceiptScreenState extends ConsumerState<PosReceiptScreen> {
                           if (_result['queued'] == true)
                             const Padding(
                               padding: EdgeInsets.only(top: 8),
-                              child: Text('Saved offline — will sync when online',
-                                  style: TextStyle(color: FlexColors.warning)),
+                              child: Text(
+                                'QUEUED OFFLINE – PENDING SYNC\n'
+                                'Not yet recorded in Odoo. It will be sent automatically when the '
+                                'connection returns (see Profile → Offline sync). Total shown is an estimate.',
+                                style: TextStyle(color: FlexColors.warning, fontWeight: FontWeight.w600),
+                              ),
                             ),
                         ],
                       ),

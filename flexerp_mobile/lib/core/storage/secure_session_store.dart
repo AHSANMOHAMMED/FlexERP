@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -54,10 +55,10 @@ class StoredSession {
       serverUrl: json['serverUrl'] as String,
       database: json['database'] as String,
       sessionId: json['sessionId'] as String,
-      uid: json['uid'] as int,
+      uid: _asInt(json['uid']) ?? (throw const FormatException('session uid missing')),
       name: json['name'] as String? ?? '',
       email: json['email'] as String? ?? '',
-      companyId: json['companyId'] as int? ?? 1,
+      companyId: _asInt(json['companyId']) ?? 1,
       companyName: json['companyName'] as String? ?? '',
       vendorId: json['vendorId'] as String? ?? 'VND-001',
       role: json['role'] as String? ?? 'employee',
@@ -70,6 +71,8 @@ class StoredSession {
     );
   }
 }
+
+int? _asInt(dynamic v) => v is int ? v : (v is num ? v.toInt() : int.tryParse('${v ?? ''}'));
 
 class SecureSessionStore {
   static const _secureKey = 'flexerp_secure_session_v1';
@@ -88,13 +91,19 @@ class SecureSessionStore {
   }
 
   Future<StoredSession?> readSession() async {
-    final raw = await _secure.read(key: _secureKey);
-    if (raw == null || raw.isEmpty) return null;
     try {
+      final raw = await _secure.read(key: _secureKey);
+      if (raw == null || raw.isEmpty) return null;
       return StoredSession.fromJson(jsonDecode(raw) as Map<String, dynamic>);
-    } catch (_) {
-      // Corrupt / partial cache — clear so desktop/mobile never boot into a blank auth loop.
-      await clearSession();
+    } catch (e) {
+      // Corrupt / partial cache or keystore failure — clear so desktop/mobile
+      // never boot into a blank auth loop.
+      debugPrint('FlexERP: stored session unreadable, clearing: $e');
+      try {
+        await clearSession();
+      } catch (clearError) {
+        debugPrint('FlexERP: failed to clear stored session: $clearError');
+      }
       return null;
     }
   }
@@ -125,7 +134,8 @@ class SecureSessionStore {
     if (raw == null) return null;
     try {
       return jsonDecode(raw) as Map<String, dynamic>;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('FlexERP: server prefs corrupt: $e');
       return null;
     }
   }

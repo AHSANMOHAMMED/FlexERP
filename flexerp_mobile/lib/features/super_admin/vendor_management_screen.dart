@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/api/odoo_client.dart';
 import '../../core/theme/flex_colors.dart';
 import '../../core/theme/flex_typography.dart';
 import '../../core/widgets/flex_card.dart';
@@ -519,8 +520,17 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
                                   await ref
                                       .read(currentUserProvider.notifier)
                                       .switchCompany(vendor.id);
-                                } catch (_) {
-                                  // Local selection still updated; RPC switch may fail offline.
+                                } catch (e) {
+                                  // Local selection still updated; surface the RPC failure.
+                                  debugPrint('FlexERP: company switch failed: $e');
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Server company switch failed: ${describeError(e)}'),
+                                        backgroundColor: FlexColors.danger,
+                                      ),
+                                    );
+                                  }
                                 }
                               }
                               if (!context.mounted) return;

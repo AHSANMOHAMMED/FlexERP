@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/auth_user.dart';
 import '../models/vendor_model.dart';
@@ -122,12 +123,8 @@ class VendorsNotifier extends Notifier<List<VendorTenant>> {
         ref.read(currentVendorProvider.notifier).replace(match.first);
       }
     } catch (e) {
-      // Keep existing list; surface via debug
-      assert(() {
-        // ignore: avoid_print
-        print('Tenant sync failed: $e');
-        return true;
-      }());
+      // Keep existing list; log for diagnostics.
+      debugPrint('FlexERP: tenant sync failed: $e');
     }
   }
 

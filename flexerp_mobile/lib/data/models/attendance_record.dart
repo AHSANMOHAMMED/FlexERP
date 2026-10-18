@@ -3,8 +3,9 @@ class AttendanceRecord {
   final String employeeName;
   final DateTime checkIn;
   DateTime? checkOut;
-  final double checkInLat;
-  final double checkInLon;
+  /// Null when the device location was unavailable (never faked).
+  final double? checkInLat;
+  final double? checkInLon;
   final String geofenceLocationName; // e.g. "Colombo HQ Geofence"
   final bool isInsideGeofence;
 
@@ -13,8 +14,8 @@ class AttendanceRecord {
     required this.employeeName,
     required this.checkIn,
     this.checkOut,
-    required this.checkInLat,
-    required this.checkInLon,
+    this.checkInLat,
+    this.checkInLon,
     required this.geofenceLocationName,
     required this.isInsideGeofence,
   });

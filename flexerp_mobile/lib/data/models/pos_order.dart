@@ -43,7 +43,10 @@ class PosShiftSession {
   double cashSalesTotal;
   double cardSalesTotal;
   int transactionCount;
-  final String state; // 'opened', 'closing_control', 'closed'
+  final String state; // 'none', 'opened', 'opening_control', 'closing_control', 'closed'
+  final int? configId;
+
+  static const String stateNone = 'none';
 
   PosShiftSession({
     required this.id,
@@ -55,7 +58,11 @@ class PosShiftSession {
     this.cardSalesTotal = 0.0,
     this.transactionCount = 0,
     this.state = 'opened',
+    this.configId,
   });
+
+  /// A real server session that accepts orders.
+  bool get isLiveOpen => id > 0 && (state == 'opened' || state == 'opening_control');
 
   double get totalExpectedDrawerCash => openingBalance + cashSalesTotal;
 }

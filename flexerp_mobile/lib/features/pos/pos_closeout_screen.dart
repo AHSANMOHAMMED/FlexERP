@@ -9,6 +9,8 @@ import '../../core/widgets/flex_app_bar.dart';
 import '../../core/localization/lk_formatters.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/pos_repository.dart';
+import '../../data/models/pos_order.dart';
+import '../../core/api/odoo_client.dart';
 
 class PosCloseoutScreen extends ConsumerStatefulWidget {
   const PosCloseoutScreen({super.key});
@@ -156,7 +158,7 @@ class _PosCloseoutScreenState extends ConsumerState<PosCloseoutScreen> {
                     children: [
                       Text('Cash Variance / Difference:', style: FlexTypography.bodyMd),
                       Text(
-                        variance == 0.0 ? 'Rs. 0.00 (Balanced)' : LkFormatters.formatLkr(variance),
+                        variance == 0.0 ? '${LkFormatters.formatLkr(0)} (Balanced)' : LkFormatters.formatLkr(variance),
                         style: FlexTypography.codeNum.copyWith(
                           color: variance == 0.0
                               ? FlexColors.success
@@ -192,7 +194,7 @@ class _PosCloseoutScreenState extends ConsumerState<PosCloseoutScreen> {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         backgroundColor: FlexColors.danger,
-                        content: Text('Close failed: $e'),
+                        content: Text('Close failed: ${describeError(e)}'),
                       ),
                     );
                   }
@@ -202,7 +204,12 @@ class _PosCloseoutScreenState extends ConsumerState<PosCloseoutScreen> {
               Center(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Text('Session is closed.', style: FlexTypography.labelMd),
+                  child: Text(
+                    session.state == PosShiftSession.stateNone
+                        ? 'No POS session is open. Open one from the register.'
+                        : 'Session is closed.',
+                    style: FlexTypography.labelMd,
+                  ),
                 ),
               ),
           ],

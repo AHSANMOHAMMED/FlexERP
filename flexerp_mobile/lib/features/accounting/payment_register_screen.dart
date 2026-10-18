@@ -4,6 +4,7 @@ import '../../core/theme/flex_colors.dart';
 import '../../core/theme/flex_typography.dart';
 import '../../core/widgets/flex_button.dart';
 import '../../core/localization/lk_formatters.dart';
+import '../../core/api/odoo_client.dart';
 import '../../data/models/account_invoice.dart';
 import '../../data/repositories/accounting_repository.dart';
 import '../../data/repositories/auth_repository.dart';
@@ -38,12 +39,17 @@ class _PaymentRegisterSheetState extends ConsumerState<PaymentRegisterSheet> {
   bool _loadingJournals = false;
   bool _submitting = false;
 
-  final List<Map<String, dynamic>> _demoJournals = const [
-    {'id': 0, 'name': 'Commercial Bank of Ceylon PLC'},
-    {'id': 0, 'name': 'Sampath Bank Corporate Account'},
-    {'id': 0, 'name': 'Hatton National Bank (HNB)'},
-    {'id': 0, 'name': 'Petty Cash Colombo Drawer'},
+  /// Demo sandbox only — live mode uses journals from the API exclusively.
+  static const List<Map<String, dynamic>> _demoJournals = [
+    {'id': -1, 'name': 'Commercial Bank of Ceylon PLC'},
+    {'id': -2, 'name': 'Sampath Bank Corporate Account'},
+    {'id': -3, 'name': 'Hatton National Bank (HNB)'},
   ];
+
+  bool get _isLive {
+    final user = ref.read(currentUserProvider);
+    return user != null && !user.isDemo;
+  }
 
   @override
   void initState() {
@@ -59,6 +65,7 @@ class _PaymentRegisterSheetState extends ConsumerState<PaymentRegisterSheet> {
     if (user == null || user.isDemo || api == null) {
       setState(() {
         _journals = List.from(_demoJournals);
+        _selectedJournalId = parseOdooInt(_journals.first['id']);
         _selectedJournalLabel = _journals.first['name']?.toString() ?? '';
       });
       return;
@@ -68,16 +75,16 @@ class _PaymentRegisterSheetState extends ConsumerState<PaymentRegisterSheet> {
       final rows = await api.accountingJournals();
       if (!mounted) return;
       setState(() {
-        _journals = rows;
+        _journals = rows.where((j) => (parseOdooInt(j['id']) ?? 0) > 0).toList();
         if (_journals.isNotEmpty) {
-          _selectedJournalId = (_journals.first['id'] as num?)?.toInt();
+          _selectedJournalId = parseOdooInt(_journals.first['id']);
           _selectedJournalLabel = _journals.first['name']?.toString() ?? '';
         }
       });
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Journals failed: $e'), backgroundColor: FlexColors.danger),
+        SnackBar(content: Text('Journals failed: ${describeError(e)}'), backgroundColor: FlexColors.danger),
       );
       setState(() {
         _journals = [];
@@ -91,31 +98,43 @@ class _PaymentRegisterSheetState extends ConsumerState<PaymentRegisterSheet> {
 
   Future<void> _confirmPayment() async {
     final amount = double.tryParse(_amountController.text) ?? widget.invoice.amountResidual;
+    final journalId = _selectedJournalId;
+    if (_isLive && (journalId == null || journalId <= 0)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Select a payment journal from Odoo first.'),
+          backgroundColor: FlexColors.danger,
+        ),
+      );
+      return;
+    }
     setState(() => _submitting = true);
     try {
-      await ref.read(invoicesProvider.notifier).registerPayment(
+      final queued = await ref.read(invoicesProvider.notifier).registerPayment(
             widget.invoice.id,
             amount,
             memo: _memoController.text.trim(),
-            journalId: (_selectedJournalId != null && _selectedJournalId! > 0)
-                ? _selectedJournalId
-                : null,
+            journalId: (_isLive && journalId != null && journalId > 0) ? journalId : null,
           );
       if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(
-          backgroundColor: FlexColors.success,
+          backgroundColor: queued ? FlexColors.warning : FlexColors.success,
           content: Text(
-            'Registered ${LkFormatters.formatLkr(amount)}'
-            '${_selectedJournalLabel.isNotEmpty ? ' via $_selectedJournalLabel' : ''}',
+            queued
+                ? 'Offline — payment of ${LkFormatters.formatLkr(amount)} queued, pending sync. '
+                    'Not yet recorded in Odoo.'
+                : 'Registered ${LkFormatters.formatLkr(amount)}'
+                    '${_selectedJournalLabel.isNotEmpty ? ' via $_selectedJournalLabel' : ''}',
           ),
         ),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Payment failed (queued if offline): $e'), backgroundColor: FlexColors.warning),
+        SnackBar(content: Text('Payment rejected: ${describeError(e)}'), backgroundColor: FlexColors.danger),
       );
     } finally {
       if (mounted) setState(() => _submitting = false);
@@ -210,23 +229,28 @@ class _PaymentRegisterSheetState extends ConsumerState<PaymentRegisterSheet> {
               style: FlexTypography.bodySm.copyWith(color: FlexColors.danger),
             )
           else
-            DropdownButtonFormField<String>(
-              value: _selectedJournalLabel.isEmpty ? null : _selectedJournalLabel,
+            DropdownButtonFormField<int>(
+              value: _selectedJournalId,
               dropdownColor: FlexColors.surfaceRaisedDark,
               decoration: const InputDecoration(),
-              items: _journals.map((j) {
+              items: _journals
+                  .where((j) => parseOdooInt(j['id']) != null)
+                  .map((j) {
                 final name = j['name']?.toString() ?? 'Journal';
-                return DropdownMenuItem(value: name, child: Text(name, style: FlexTypography.bodyMd));
+                return DropdownMenuItem<int>(
+                  value: parseOdooInt(j['id']),
+                  child: Text(name, style: FlexTypography.bodyMd),
+                );
               }).toList(),
               onChanged: (val) {
                 if (val == null) return;
                 final match = _journals.firstWhere(
-                  (j) => j['name']?.toString() == val,
+                  (j) => parseOdooInt(j['id']) == val,
                   orElse: () => _journals.first,
                 );
                 setState(() {
-                  _selectedJournalLabel = val;
-                  _selectedJournalId = (match['id'] as num?)?.toInt();
+                  _selectedJournalId = val;
+                  _selectedJournalLabel = match['name']?.toString() ?? '';
                 });
               },
             ),

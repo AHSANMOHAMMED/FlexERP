@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../mock/mock_sri_lanka_data.dart';
 import '../models/vendor_bill.dart';
 import 'auth_repository.dart';
+import 'pos_repository.dart' show newPosOrderUuid;
 
 class VendorBillsNotifier extends Notifier<List<VendorBill>> {
   @override
@@ -47,7 +48,7 @@ class VendorBillsNotifier extends Notifier<List<VendorBill>> {
     final bill = state.firstWhere((b) => b.id == billId, orElse: () => state.first);
     if (user != null && !user.isDemo && api != null) {
       try {
-        await api.registerPayment(moveId: billId, amount: bill.amountDue);
+        await api.registerPayment(moveId: billId, amount: bill.amountDue, uuid: newPosOrderUuid());
       } catch (e) {
         rethrow;
       }

@@ -5,6 +5,7 @@ import '../../core/theme/flex_typography.dart';
 import '../../core/widgets/flex_card.dart';
 import '../../core/widgets/flex_button.dart';
 import '../../core/localization/lk_formatters.dart';
+import '../../core/api/odoo_client.dart';
 import '../../data/models/customer_partner.dart';
 import '../../data/models/sale_order.dart';
 import '../../data/repositories/auth_repository.dart';
@@ -124,13 +125,40 @@ class _QuotationBuilderScreenState extends ConsumerState<QuotationBuilderScreen>
         backgroundColor: FlexColors.surfaceDark,
         isScrollControlled: true,
         builder: (ctx) {
+          var sheetProducts = _products;
+          var sheetLoading = false;
+          String? sheetError;
           return StatefulBuilder(
             builder: (ctx, setSheetState) {
-              final visible = _categoryId == null
-                  ? _products
-                  : _products
-                      .where((p) => (p['categ_id'] as num?)?.toInt() == _categoryId)
-                      .toList();
+              // Server-side category filter (category_id → child_of) so
+              // products outside the first page are still reachable.
+              Future<void> filterByCategory(int? id) async {
+                setState(() => _categoryId = id);
+                if (id == null) {
+                  setSheetState(() {
+                    sheetProducts = _products;
+                    sheetError = null;
+                  });
+                  return;
+                }
+                final api = ref.read(flexerpApiProvider);
+                if (api == null) return;
+                setSheetState(() {
+                  sheetLoading = true;
+                  sheetError = null;
+                });
+                try {
+                  final filtered = await api.products(limit: 120, categoryId: id);
+                  setSheetState(() => sheetProducts = filtered);
+                } catch (e) {
+                  debugPrint('FlexERP: category filter failed: $e');
+                  setSheetState(() => sheetError = 'Could not load category: ${describeError(e)}');
+                } finally {
+                  setSheetState(() => sheetLoading = false);
+                }
+              }
+
+              final visible = sheetProducts;
               return SafeArea(
                 child: SizedBox(
                   height: MediaQuery.of(ctx).size.height * 0.7,
@@ -146,10 +174,7 @@ class _QuotationBuilderScreenState extends ConsumerState<QuotationBuilderScreen>
                               ChoiceChip(
                                 label: const Text('All'),
                                 selected: _categoryId == null,
-                                onSelected: (_) {
-                                  setState(() => _categoryId = null);
-                                  setSheetState(() {});
-                                },
+                                onSelected: (_) => filterByCategory(null),
                               ),
                               ..._categories.take(20).map((c) {
                                 final id = (c['id'] as num?)?.toInt();
@@ -158,15 +183,18 @@ class _QuotationBuilderScreenState extends ConsumerState<QuotationBuilderScreen>
                                   child: ChoiceChip(
                                     label: Text(c['name']?.toString() ?? 'Cat'),
                                     selected: _categoryId == id,
-                                    onSelected: (_) {
-                                      setState(() => _categoryId = id);
-                                      setSheetState(() {});
-                                    },
+                                    onSelected: (_) => filterByCategory(id),
                                   ),
                                 );
                               }),
                             ],
                           ),
+                        ),
+                      if (sheetLoading) const LinearProgressIndicator(),
+                      if (sheetError != null)
+                        Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Text(sheetError!, style: const TextStyle(color: FlexColors.danger)),
                         ),
                       Expanded(
                         child: ListView.builder(

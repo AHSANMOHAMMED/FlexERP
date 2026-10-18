@@ -1,26 +1,30 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import '../models/attendance_record.dart';
 import '../models/hr_models.dart';
 import '../mock/mock_sri_lanka_data.dart';
+import '../../core/api/odoo_client.dart';
 import '../../core/offline/offline_queue.dart';
 import 'auth_repository.dart';
 
-/// Colombo HQ fallback when device GPS is unavailable or denied.
-const double kDefaultAttendanceLat = 6.9271;
-const double kDefaultAttendanceLon = 79.8612;
-
+/// Device location for an attendance punch. Coordinates are null when the
+/// location is unavailable — they are never faked.
 class AttendanceGpsFix {
   const AttendanceGpsFix({
-    required this.lat,
-    required this.lon,
-    required this.usedDefault,
+    this.lat,
+    this.lon,
     required this.label,
+    this.unavailableReason,
   });
-  final double lat;
-  final double lon;
-  final bool usedDefault;
+  final double? lat;
+  final double? lon;
   final String label;
+
+  /// Why no coordinates were captured (null when [hasFix]).
+  final String? unavailableReason;
+
+  bool get hasFix => lat != null && lon != null;
 }
 
 Future<AttendanceGpsFix> resolveAttendanceGps() async {
@@ -28,10 +32,8 @@ Future<AttendanceGpsFix> resolveAttendanceGps() async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       return const AttendanceGpsFix(
-        lat: kDefaultAttendanceLat,
-        lon: kDefaultAttendanceLon,
-        usedDefault: true,
-        label: 'Colombo HQ (GPS unavailable — defaulted)',
+        label: 'Location unavailable',
+        unavailableReason: 'Location services are off — recorded without GPS coordinates.',
       );
     }
     var permission = await Geolocator.checkPermission();
@@ -41,10 +43,8 @@ Future<AttendanceGpsFix> resolveAttendanceGps() async {
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
       return const AttendanceGpsFix(
-        lat: kDefaultAttendanceLat,
-        lon: kDefaultAttendanceLon,
-        usedDefault: true,
-        label: 'Colombo HQ (location permission denied — defaulted)',
+        label: 'Location unavailable',
+        unavailableReason: 'Location permission denied — recorded without GPS coordinates.',
       );
     }
     final pos = await Geolocator.getCurrentPosition(
@@ -53,17 +53,24 @@ Future<AttendanceGpsFix> resolveAttendanceGps() async {
     return AttendanceGpsFix(
       lat: pos.latitude,
       lon: pos.longitude,
-      usedDefault: false,
       label: 'Device GPS (${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)})',
     );
-  } catch (_) {
+  } catch (e) {
+    debugPrint('FlexERP: GPS fix failed: $e');
     return const AttendanceGpsFix(
-      lat: kDefaultAttendanceLat,
-      lon: kDefaultAttendanceLon,
-      usedDefault: true,
-      label: 'Colombo HQ (GPS error — defaulted)',
+      label: 'Location unavailable',
+      unavailableReason: 'Could not get device location — recorded without GPS coordinates.',
     );
   }
+}
+
+/// Device time of an attendance action in UTC, Odoo datetime format
+/// (`YYYY-MM-DD HH:MM:SS`).
+String odooUtcTimestamp(DateTime time) {
+  final t = time.toUtc();
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '${t.year.toString().padLeft(4, '0')}-${two(t.month)}-${two(t.day)} '
+      '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
 }
 
 class AttendanceGpsNoteNotifier extends Notifier<String?> {
@@ -83,43 +90,56 @@ class AttendanceNotifier extends Notifier<AttendanceRecord?> {
     return MockSriLankaDataService.currentAttendance;
   }
 
+  /// Records a check-in. Live: server first; on a network failure the punch
+  /// (with its real device timestamp) is queued offline. Odoo business
+  /// errors are rethrown for the UI and never queued.
   Future<void> checkIn({required String employeeName, required bool isInsideGeofence}) async {
+    final actionTime = DateTime.now();
     final gps = await resolveAttendanceGps();
-    ref.read(attendanceGpsNoteProvider.notifier).setNote(
-          gps.usedDefault
-              ? 'Using Colombo HQ default coordinates — device location unavailable.'
-              : null,
-        );
+    final notes = <String>[if (gps.unavailableReason != null) gps.unavailableReason!];
     final user = ref.read(currentUserProvider);
     final api = ref.read(flexerpApiProvider);
-    if (user != null && !user.isDemo && api != null) {
+    final isLive = user != null && !user.isDemo;
+    if (isLive) {
+      if (api == null) throw OdooException('Not signed in to Odoo');
+      final timestamp = odooUtcTimestamp(actionTime);
       try {
         final result = await api.hrAttendance(
           checkIn: true,
           latitude: gps.lat,
           longitude: gps.lon,
+          timestamp: timestamp,
         );
+        ref.read(attendanceGpsNoteProvider.notifier).setNote(notes.isEmpty ? null : notes.join(' '));
         state = AttendanceRecord(
-          id: result['id'] as int? ?? DateTime.now().millisecondsSinceEpoch,
+          id: parseOdooInt(result['id']) ?? actionTime.millisecondsSinceEpoch,
           employeeName: employeeName,
-          checkIn: DateTime.tryParse(result['check_in']?.toString() ?? '') ?? DateTime.now(),
+          checkIn: _parseServerUtc(result['check_in']) ?? actionTime,
           checkInLat: gps.lat,
           checkInLon: gps.lon,
           geofenceLocationName: gps.label,
           isInsideGeofence: isInsideGeofence,
         );
         return;
-      } catch (_) {
+      } catch (e) {
+        if (!isNetworkFailure(e)) rethrow;
         await ref.read(offlineQueueProvider.notifier).enqueue(
               type: 'hr_attendance',
-              payload: {'check_in': true, 'latitude': gps.lat, 'longitude': gps.lon},
+              payload: {
+                'check_in': true,
+                if (gps.lat != null) 'latitude': gps.lat,
+                if (gps.lon != null) 'longitude': gps.lon,
+                'timestamp': timestamp,
+              },
             );
+        notes.add('Offline — check-in queued, pending sync.');
       }
     }
+    ref.read(attendanceGpsNoteProvider.notifier).setNote(notes.isEmpty ? null : notes.join(' '));
     state = AttendanceRecord(
-      id: DateTime.now().millisecondsSinceEpoch,
+      id: actionTime.millisecondsSinceEpoch,
       employeeName: employeeName,
-      checkIn: DateTime.now(),
+      checkIn: actionTime,
       checkInLat: gps.lat,
       checkInLon: gps.lon,
       geofenceLocationName: gps.label,
@@ -128,50 +148,71 @@ class AttendanceNotifier extends Notifier<AttendanceRecord?> {
   }
 
   Future<void> checkOut() async {
-    if (state == null) return;
+    final current = state;
+    if (current == null) return;
+    final actionTime = DateTime.now();
     final gps = await resolveAttendanceGps();
-    ref.read(attendanceGpsNoteProvider.notifier).setNote(
-          gps.usedDefault
-              ? 'Using Colombo HQ default coordinates — device location unavailable.'
-              : null,
-        );
+    final notes = <String>[if (gps.unavailableReason != null) gps.unavailableReason!];
     final user = ref.read(currentUserProvider);
     final api = ref.read(flexerpApiProvider);
-    if (user != null && !user.isDemo && api != null) {
+    final isLive = user != null && !user.isDemo;
+    if (isLive) {
+      if (api == null) throw OdooException('Not signed in to Odoo');
+      final timestamp = odooUtcTimestamp(actionTime);
       try {
         final result = await api.hrAttendance(
           checkIn: false,
           latitude: gps.lat,
           longitude: gps.lon,
+          timestamp: timestamp,
         );
+        ref.read(attendanceGpsNoteProvider.notifier).setNote(notes.isEmpty ? null : notes.join(' '));
         state = AttendanceRecord(
-          id: result['id'] as int? ?? state!.id,
-          employeeName: state!.employeeName,
-          checkIn: state!.checkIn,
-          checkOut: DateTime.tryParse(result['check_out']?.toString() ?? '') ?? DateTime.now(),
-          checkInLat: state!.checkInLat,
-          checkInLon: state!.checkInLon,
-          geofenceLocationName: state!.geofenceLocationName,
-          isInsideGeofence: state!.isInsideGeofence,
+          id: parseOdooInt(result['id']) ?? current.id,
+          employeeName: current.employeeName,
+          checkIn: current.checkIn,
+          checkOut: _parseServerUtc(result['check_out']) ?? actionTime,
+          checkInLat: current.checkInLat,
+          checkInLon: current.checkInLon,
+          geofenceLocationName: current.geofenceLocationName,
+          isInsideGeofence: current.isInsideGeofence,
         );
         return;
-      } catch (_) {
+      } catch (e) {
+        if (!isNetworkFailure(e)) rethrow;
         await ref.read(offlineQueueProvider.notifier).enqueue(
               type: 'hr_attendance',
-              payload: {'check_in': false, 'latitude': gps.lat, 'longitude': gps.lon},
+              payload: {
+                'check_in': false,
+                if (gps.lat != null) 'latitude': gps.lat,
+                if (gps.lon != null) 'longitude': gps.lon,
+                'timestamp': timestamp,
+              },
             );
+        notes.add('Offline — check-out queued, pending sync.');
       }
     }
+    ref.read(attendanceGpsNoteProvider.notifier).setNote(notes.isEmpty ? null : notes.join(' '));
     state = AttendanceRecord(
-      id: state!.id,
-      employeeName: state!.employeeName,
-      checkIn: state!.checkIn,
-      checkOut: DateTime.now(),
-      checkInLat: state!.checkInLat,
-      checkInLon: state!.checkInLon,
-      geofenceLocationName: state!.geofenceLocationName,
-      isInsideGeofence: state!.isInsideGeofence,
+      id: current.id,
+      employeeName: current.employeeName,
+      checkIn: current.checkIn,
+      checkOut: actionTime,
+      checkInLat: current.checkInLat,
+      checkInLon: current.checkInLon,
+      geofenceLocationName: current.geofenceLocationName,
+      isInsideGeofence: current.isInsideGeofence,
     );
+  }
+
+  /// Odoo returns naive UTC datetimes (`YYYY-MM-DD HH:MM:SS`).
+  static DateTime? _parseServerUtc(dynamic value) {
+    if (value == null || value == false) return null;
+    final raw = value.toString().trim();
+    if (raw.isEmpty) return null;
+    final iso = raw.contains('T') ? raw : raw.replaceFirst(' ', 'T');
+    final hasZone = iso.endsWith('Z') || RegExp(r'[+-]\d\d:?\d\d$').hasMatch(iso);
+    return DateTime.tryParse(hasZone ? iso : '${iso}Z')?.toLocal();
   }
 }
 

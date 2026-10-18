@@ -4,6 +4,9 @@ import '../../core/theme/flex_colors.dart';
 import '../../core/theme/flex_typography.dart';
 import '../../core/widgets/flex_card.dart';
 import '../../core/widgets/flex_badge.dart';
+import '../../core/widgets/barcode_camera_view.dart';
+import '../../core/api/odoo_client.dart';
+import '../../data/models/vendor_model.dart';
 import '../../core/widgets/flex_button.dart';
 import '../../core/widgets/flex_app_bar.dart';
 import '../../core/localization/lk_formatters.dart';
@@ -18,9 +21,8 @@ class BarcodeScannerScreen extends ConsumerStatefulWidget {
 }
 
 class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
-  bool _isTorchOn = false;
-  bool _isContinuous = true;
-  String _activeBarcode = '4792001928312';
+  String _activeBarcode = '—';
+  bool _lookupBusy = false;
   final _manualBarcodeCtrl = TextEditingController();
   Map<String, dynamic> _scannedProduct = {
     'name': 'Scan a barcode to look up stock',
@@ -44,11 +46,34 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
     super.dispose();
   }
 
+  bool get _isLive {
+    final user = ref.read(currentUserProvider);
+    return user != null && !user.isDemo;
+  }
+
   Future<void> _simulateScan(String code) async {
-    setState(() => _activeBarcode = code);
-    final product =
-        await ref.read(vendorInventoryProvider.notifier).lookupBarcodeLive(code);
+    setState(() {
+      _activeBarcode = code;
+      _lookupBusy = true;
+    });
+    final VendorProduct? lookedUp;
+    try {
+      lookedUp = await ref.read(vendorInventoryProvider.notifier).lookupBarcodeLive(code);
+    } catch (e) {
+      debugPrint('FlexERP: barcode lookup failed for $code: $e');
+      if (!mounted) return;
+      setState(() => _lookupBusy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: FlexColors.danger,
+          content: Text('Lookup failed: ${describeError(e)}'),
+        ),
+      );
+      return;
+    }
     if (!mounted) return;
+    setState(() => _lookupBusy = false);
+    final product = lookedUp;
     if (product == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -94,109 +119,67 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
       ),
       body: Column(
         children: [
-          if (_isDesktop)
+          if (_isDesktop || !cameraScanSupported)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  FlexCard(
-                    child: Text(
-                      'Desktop mode: camera scanner is disabled. Use a USB barcode wedge or type the SKU/barcode below.',
-                      style: FlexTypography.bodySm,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _manualBarcodeCtrl,
-                    autofocus: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Barcode / SKU',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.keyboard),
-                    ),
-                    onSubmitted: (v) {
-                      if (v.trim().isNotEmpty) _simulateScan(v.trim());
-                      _manualBarcodeCtrl.clear();
-                    },
-                  ),
-                ],
+              child: FlexCard(
+                child: Text(
+                  'Camera scanner not available here. Use a USB barcode wedge or type the SKU/barcode below.',
+                  style: FlexTypography.bodySm,
+                ),
               ),
             )
           else
-            Container(
-              height: 240,
-              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.black,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: FlexColors.primary, width: 2),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: BarcodeCameraView(
+                height: 220,
+                onDetected: (code) {
+                  if (_lookupBusy) return;
+                  _simulateScan(code);
+                },
               ),
-              child: Stack(
-                alignment: Alignment.center,
+            ),
+
+          // Manual / USB keyboard-wedge entry (always available)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: TextField(
+              controller: _manualBarcodeCtrl,
+              autofocus: _isDesktop,
+              decoration: const InputDecoration(
+                labelText: 'Barcode / SKU (keyboard / USB scanner)',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.keyboard),
+              ),
+              onSubmitted: (v) {
+                if (v.trim().isNotEmpty) _simulateScan(v.trim());
+                _manualBarcodeCtrl.clear();
+              },
+            ),
+          ),
+
+          // Demo-only quick barcodes
+          if (!_isLive)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Container(
-                    width: 200,
-                    height: 120,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: FlexColors.primaryLight, width: 2),
-                    ),
-                    child: Center(
-                      child: Container(
-                        height: 2,
-                        color: FlexColors.danger.withValues(alpha: 0.8),
-                      ),
-                    ),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.qr_code, size: 16),
+                    label: const Text('Demo: Pallet'),
+                    onPressed: () => _simulateScan('4792001928312'),
                   ),
-                  Positioned(
-                    bottom: 12,
-                    child: Row(
-                      children: [
-                        IconButton(
-                          icon: Icon(
-                            _isTorchOn ? Icons.flash_on : Icons.flash_off,
-                            color: _isTorchOn ? FlexColors.warning : Colors.white,
-                          ),
-                          onPressed: () => setState(() => _isTorchOn = !_isTorchOn),
-                        ),
-                        const SizedBox(width: 8),
-                        FlexBadge(
-                          text: _isContinuous ? 'CONTINUOUS SCAN' : 'SINGLE SCAN',
-                          variant: FlexBadgeVariant.info,
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton(
-                          icon: const Icon(Icons.flip_camera_ios, color: Colors.white),
-                          onPressed: () {},
-                        ),
-                      ],
-                    ),
+                  const SizedBox(width: 10),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.qr_code, size: 16),
+                    label: const Text('Demo: Forklift Part'),
+                    onPressed: () => _simulateScan('4792001928428'),
                   ),
                 ],
               ),
             ),
-
-          // Simulation Triggers for Demo
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.qr_code, size: 16),
-                  label: const Text('Scan Pallet'),
-                  onPressed: () => _simulateScan('4792001928312'),
-                ),
-                const SizedBox(width: 10),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.qr_code, size: 16),
-                  label: const Text('Scan Forklift Part'),
-                  onPressed: () => _simulateScan('4792001928428'),
-                ),
-              ],
-            ),
-          ),
           const SizedBox(height: 8),
 
           // Bottom Half: Product Detail Sheet

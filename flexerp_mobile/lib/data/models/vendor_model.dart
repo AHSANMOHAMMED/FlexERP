@@ -1,3 +1,4 @@
+import '../../core/api/odoo_client.dart';
 import 'pos_order.dart';
 
 class VendorFeatures {
@@ -208,7 +209,7 @@ class VendorTenant {
 
   factory VendorTenant.fromApi(Map<String, dynamic> json) {
     return VendorTenant(
-      id: json['id'] as int,
+      id: parseOdooInt(json['id']) ?? 0,
       vendorId: json['vendor_id'] as String? ?? 'VND-${json['id']}',
       name: json['name'] as String? ?? '',
       email: json['email'] as String? ?? '',
@@ -292,7 +293,7 @@ class VendorProduct {
 
   factory VendorProduct.fromApi(Map<String, dynamic> json) {
     return VendorProduct(
-      id: json['id'] as int,
+      id: parseOdooInt(json['id']) ?? 0,
       vendorId: json['vendor_id'] as String? ?? '',
       name: json['name'] as String? ?? '',
       barcode: json['barcode'] as String? ?? '',

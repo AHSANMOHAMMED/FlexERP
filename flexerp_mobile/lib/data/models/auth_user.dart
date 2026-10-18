@@ -85,7 +85,7 @@ class AuthUser {
     this.features = const VendorFeatures(),
     this.enforceHttps = false,
     this.currencyName = 'LKR',
-    this.currencySymbol = 'Rs',
+    this.currencySymbol = 'Rs.',
   });
 
   AuthUser copyWith({

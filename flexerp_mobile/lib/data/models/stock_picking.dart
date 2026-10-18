@@ -28,6 +28,10 @@ class StockPicking {
   final List<PickingMoveLine> lines;
   final DateTime scheduledDate;
 
+  /// False for live list rows whose move lines have not been fetched yet
+  /// (details are loaded on demand when the picking is opened).
+  final bool linesLoaded;
+
   StockPicking({
     required this.id,
     required this.name,
@@ -37,7 +41,22 @@ class StockPicking {
     required this.state,
     required this.lines,
     required this.scheduledDate,
+    this.linesLoaded = true,
   });
+
+  StockPicking copyWith({String? state, List<PickingMoveLine>? lines, bool? linesLoaded}) {
+    return StockPicking(
+      id: id,
+      name: name,
+      partnerName: partnerName,
+      origin: origin,
+      pickingType: pickingType,
+      state: state ?? this.state,
+      lines: lines ?? this.lines,
+      scheduledDate: scheduledDate,
+      linesLoaded: linesLoaded ?? this.linesLoaded,
+    );
+  }
 
   int get totalItems => lines.length;
   int get completedItems => lines.where((l) => l.isFulfilled).length;

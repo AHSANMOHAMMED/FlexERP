@@ -6,6 +6,7 @@ import '../../core/widgets/flex_app_bar.dart';
 import '../../core/widgets/flex_button.dart';
 import '../../core/widgets/flex_card.dart';
 import '../../core/localization/lk_formatters.dart';
+import '../../core/api/odoo_client.dart';
 import '../../data/repositories/auth_repository.dart';
 
 class ShopCatalogScreen extends ConsumerStatefulWidget {
@@ -49,9 +50,11 @@ class _ShopCatalogScreenState extends ConsumerState<ShopCatalogScreen> {
         _loading = false;
       });
     } catch (e) {
+      debugPrint('FlexERP: shop catalog load failed: $e');
+      if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error = describeError(e);
       });
     }
   }
@@ -59,14 +62,33 @@ class _ShopCatalogScreenState extends ConsumerState<ShopCatalogScreen> {
   Future<void> _refreshCart() async {
     final api = ref.read(flexerpApiProvider);
     if (api == null) return;
-    final cart = await api.shopCart();
-    if (mounted) setState(() => _cart = cart);
+    try {
+      final cart = await api.shopCart();
+      if (mounted) setState(() => _cart = cart);
+    } catch (e) {
+      _showError('Cart refresh', e);
+    }
+  }
+
+  void _showError(String action, Object e) {
+    debugPrint('FlexERP: shop $action failed: $e');
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$action failed: ${describeError(e)}'), backgroundColor: FlexColors.danger),
+    );
   }
 
   Future<void> _addToCart(int productId) async {
     final api = ref.read(flexerpApiProvider);
-    if (api == null) return;
-    final cart = await api.shopCartAdd(productId: productId);
+    if (api == null || productId <= 0) return;
+    final Map<String, dynamic> cart;
+    try {
+      cart = await api.shopCartAdd(productId: productId);
+    } catch (e) {
+      _showError('Add to cart', e);
+      return;
+    }
+    if (!mounted) return;
     setState(() => _cart = cart);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -77,14 +99,24 @@ class _ShopCatalogScreenState extends ConsumerState<ShopCatalogScreen> {
   Future<void> _updateLineQty(int lineId, double qty) async {
     final api = ref.read(flexerpApiProvider);
     if (api == null) return;
-    final cart = await api.shopCartUpdate(lineId: lineId, qty: qty);
-    setState(() => _cart = cart);
+    try {
+      final cart = await api.shopCartUpdate(lineId: lineId, qty: qty);
+      if (mounted) setState(() => _cart = cart);
+    } catch (e) {
+      _showError('Cart update', e);
+    }
   }
 
   Future<void> _checkout() async {
     final api = ref.read(flexerpApiProvider);
     if (api == null) return;
-    final result = await api.shopCheckout();
+    final Map<String, dynamic> result;
+    try {
+      result = await api.shopCheckout();
+    } catch (e) {
+      _showError('Checkout', e);
+      return;
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -203,7 +235,7 @@ class _ShopCatalogScreenState extends ConsumerState<ShopCatalogScreen> {
                                 ),
                                 IconButton(
                                   icon: const Icon(Icons.add_shopping_cart, color: FlexColors.primaryLight),
-                                  onPressed: () => _addToCart(p['id'] as int),
+                                  onPressed: () => _addToCart(parseOdooInt(p['product_id']) ?? 0),
                                 ),
                               ],
                             ),

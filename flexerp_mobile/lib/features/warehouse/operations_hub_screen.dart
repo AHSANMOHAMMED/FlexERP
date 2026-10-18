@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/api/odoo_client.dart';
 import '../../core/theme/flex_colors.dart';
 import '../../core/widgets/flex_app_bar.dart';
 import '../../data/repositories/auth_repository.dart';
@@ -20,7 +21,19 @@ class _OperationsHubScreenState extends ConsumerState<OperationsHubScreen> {
   @override
   void initState() {
     super.initState();
-    Future.microtask(() => ref.read(stockPickingsProvider.notifier).syncFromOdoo());
+    Future.microtask(_sync);
+  }
+
+  Future<void> _sync() async {
+    try {
+      await ref.read(stockPickingsProvider.notifier).syncFromOdoo();
+    } catch (e) {
+      debugPrint('FlexERP: picking sync failed: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Picking sync failed: ${describeError(e)}'), backgroundColor: FlexColors.danger),
+      );
+    }
   }
 
   @override
@@ -46,7 +59,7 @@ class _OperationsHubScreenState extends ConsumerState<OperationsHubScreen> {
         title: 'Operations Hub',
         subtitle: 'Warehouse Logistics & Transfers',
         currentBranch: currentBranch,
-        onSync: () => ref.read(stockPickingsProvider.notifier).syncFromOdoo(),
+        onSync: _sync,
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
@@ -62,7 +75,7 @@ class _OperationsHubScreenState extends ConsumerState<OperationsHubScreen> {
       body: RefreshIndicator(
         color: FlexColors.primary,
         backgroundColor: FlexColors.surface,
-        onRefresh: () => ref.read(stockPickingsProvider.notifier).syncFromOdoo(),
+        onRefresh: _sync,
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -255,7 +268,7 @@ class _OperationsHubScreenState extends ConsumerState<OperationsHubScreen> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            '${picking.lines.length} Line items',
+                            picking.linesLoaded ? '${picking.lines.length} Line items' : 'Open to load lines',
                             style: const TextStyle(color: FlexColors.textSecondary, fontSize: 12),
                           ),
                           ElevatedButton.icon(
@@ -264,11 +277,21 @@ class _OperationsHubScreenState extends ConsumerState<OperationsHubScreen> {
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                             ),
-                            onPressed: () {
-                              ref.read(stockPickingsProvider.notifier).validatePicking(picking.id);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Picking ${picking.name} validated')),
-                              );
+                            onPressed: () async {
+                              final messenger = ScaffoldMessenger.of(context);
+                              try {
+                                await ref.read(stockPickingsProvider.notifier).validatePicking(picking.id);
+                                messenger.showSnackBar(
+                                  SnackBar(content: Text('Picking ${picking.name} validated')),
+                                );
+                              } catch (e) {
+                                messenger.showSnackBar(
+                                  SnackBar(
+                                    content: Text('Validation failed: ${describeError(e)}'),
+                                    backgroundColor: FlexColors.danger,
+                                  ),
+                                );
+                              }
                             },
                             icon: const Icon(Icons.check, size: 14),
                             label: const Text('Validate Transfer', style: TextStyle(fontSize: 12)),
