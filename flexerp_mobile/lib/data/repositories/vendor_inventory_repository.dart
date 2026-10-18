@@ -9,6 +9,18 @@ final vendorStockEventStreamProvider = StreamProvider<VendorStockUpdateEvent>((r
   return notifier.stockEventStream;
 });
 
+/// Last sync/write error for live inventory (null when healthy).
+final vendorInventoryErrorProvider = NotifierProvider<VendorInventoryErrorNotifier, String?>(
+  VendorInventoryErrorNotifier.new,
+);
+
+class VendorInventoryErrorNotifier extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void setError(String? value) => state = value;
+}
+
 final vendorInventoryProvider = NotifierProvider<VendorInventoryNotifier, List<VendorProduct>>(
   VendorInventoryNotifier.new,
 );
@@ -19,8 +31,8 @@ class VendorInventoryNotifier extends Notifier<List<VendorProduct>> {
 
   Stream<VendorStockUpdateEvent> get stockEventStream => _stockEventController.stream;
 
-  // In-memory isolated databases keyed by unique vendorId
-  static final Map<String, List<VendorProduct>> _isolatedVendorDbs = {
+  // Demo-only in-memory catalogs keyed by vendorId
+  static final Map<String, List<VendorProduct>> _demoVendorDbs = {
     'VND-001': [
       VendorProduct(
         id: 101,
@@ -200,17 +212,31 @@ class VendorInventoryNotifier extends Notifier<List<VendorProduct>> {
     ],
   };
 
-  // Fast O(1) in-memory barcode index
+  /// Live-mode working cache (never seeded from demo catalogs).
+  static final Map<String, List<VendorProduct>> _liveCache = {};
+
   final Map<String, VendorProduct> _barcodeIndex = {};
+
+  bool get _isLive {
+    final user = ref.read(currentUserProvider);
+    return user != null && !user.isDemo;
+  }
 
   @override
   List<VendorProduct> build() {
     final currentVendor = ref.watch(currentVendorProvider);
     final vendorId = currentVendor.vendorId;
+    final user = ref.watch(currentUserProvider);
 
-    final products = _isolatedVendorDbs[vendorId] ?? [];
+    if (user != null && !user.isDemo) {
+      final products = _liveCache[vendorId] ?? const <VendorProduct>[];
+      _rebuildBarcodeIndex(products);
+      Future.microtask(syncFromServer);
+      return products;
+    }
+
+    final products = List<VendorProduct>.from(_demoVendorDbs[vendorId] ?? const []);
     _rebuildBarcodeIndex(products);
-    Future.microtask(syncFromServer);
     return products;
   }
 
@@ -222,11 +248,13 @@ class VendorInventoryNotifier extends Notifier<List<VendorProduct>> {
     try {
       final rows = await api.posProducts();
       final products = rows.map(VendorProduct.fromApi).toList();
-      _isolatedVendorDbs[vendor.vendorId] = products;
+      _liveCache[vendor.vendorId] = products;
       _rebuildBarcodeIndex(products);
       state = products;
-    } catch (_) {
-      // Keep local cache on failure
+      ref.read(vendorInventoryErrorProvider.notifier).setError(null);
+    } catch (e) {
+      ref.read(vendorInventoryErrorProvider.notifier).setError(e.toString());
+      rethrow;
     }
   }
 
@@ -240,10 +268,11 @@ class VendorInventoryNotifier extends Notifier<List<VendorProduct>> {
     if (row == null) return null;
     final product = VendorProduct.fromApi(row);
     final vendorId = ref.read(currentVendorProvider).vendorId;
-    final current = _isolatedVendorDbs[vendorId] ?? [];
+    final current = List<VendorProduct>.from(_liveCache[vendorId] ?? state);
     if (!current.any((p) => p.id == product.id)) {
-      _isolatedVendorDbs[vendorId] = [...current, product];
-      state = _isolatedVendorDbs[vendorId]!;
+      current.add(product);
+      _liveCache[vendorId] = current;
+      state = current;
       _rebuildBarcodeIndex(state);
     }
     return product;
@@ -258,24 +287,29 @@ class VendorInventoryNotifier extends Notifier<List<VendorProduct>> {
     }
   }
 
-  /// Instant O(1) lookup by barcode for high-speed POS scanning
+  void _writeList(String vendorId, List<VendorProduct> updatedList) {
+    if (_isLive) {
+      _liveCache[vendorId] = updatedList;
+    } else {
+      _demoVendorDbs[vendorId] = updatedList;
+    }
+    _rebuildBarcodeIndex(updatedList);
+    state = updatedList;
+  }
+
   VendorProduct? findByBarcode(String barcode) {
     return _barcodeIndex[barcode.trim()];
   }
 
-  /// Add new product to current vendor's isolated database
   void addProduct(VendorProduct product) {
     final currentVendor = ref.read(currentVendorProvider);
     final vendorId = currentVendor.vendorId;
-
-    final currentList = _isolatedVendorDbs[vendorId] ?? [];
+    final currentList = List<VendorProduct>.from(
+      _isLive ? (_liveCache[vendorId] ?? state) : (_demoVendorDbs[vendorId] ?? []),
+    );
     final updatedList = [...currentList, product];
-    _isolatedVendorDbs[vendorId] = updatedList;
+    _writeList(vendorId, updatedList);
 
-    _rebuildBarcodeIndex(updatedList);
-    state = updatedList;
-
-    // Broadcast live event
     _stockEventController.add(VendorStockUpdateEvent(
       vendorId: vendorId,
       productId: product.id,
@@ -287,48 +321,75 @@ class VendorInventoryNotifier extends Notifier<List<VendorProduct>> {
     ));
   }
 
-  /// Update existing product
   void updateProduct(VendorProduct updated) {
     final currentVendor = ref.read(currentVendorProvider);
     final vendorId = currentVendor.vendorId;
-
-    final currentList = _isolatedVendorDbs[vendorId] ?? [];
+    final currentList = List<VendorProduct>.from(
+      _isLive ? (_liveCache[vendorId] ?? state) : (_demoVendorDbs[vendorId] ?? []),
+    );
     final updatedList = [
       for (final p in currentList)
         if (p.id == updated.id) updated else p
     ];
-    _isolatedVendorDbs[vendorId] = updatedList;
-
-    _rebuildBarcodeIndex(updatedList);
-    state = updatedList;
+    _writeList(vendorId, updatedList);
   }
 
-  /// Fast barcode overwrite/assignment
   void updateBarcode(int productId, String newBarcode) {
     final currentVendor = ref.read(currentVendorProvider);
     final vendorId = currentVendor.vendorId;
-
-    final currentList = _isolatedVendorDbs[vendorId] ?? [];
+    final currentList = List<VendorProduct>.from(
+      _isLive ? (_liveCache[vendorId] ?? state) : (_demoVendorDbs[vendorId] ?? []),
+    );
     final updatedList = [
       for (final p in currentList)
-        if (p.id == productId)
-          p.copyWith(barcode: newBarcode.trim())
-        else
-          p
+        if (p.id == productId) p.copyWith(barcode: newBarcode.trim()) else p
     ];
-    _isolatedVendorDbs[vendorId] = updatedList;
-
-    _rebuildBarcodeIndex(updatedList);
-    state = updatedList;
+    _writeList(vendorId, updatedList);
   }
 
-  /// Instant real-time stock adjustment (+ or -) with live broadcasting
-  void adjustStock(int productId, int delta, {String reason = 'Admin Stock Adjustment'}) {
+  /// Stock adjustment. In live mode calls Odoo `stock/adjust` then refreshes.
+  Future<void> adjustStock(int productId, int delta, {String reason = 'Admin Stock Adjustment'}) async {
     final currentVendor = ref.read(currentVendorProvider);
     final vendorId = currentVendor.vendorId;
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+
+    if (user != null && !user.isDemo && api != null) {
+      try {
+        final result = await api.stockAdjust(
+          productId: productId,
+          quantityDelta: delta.toDouble(),
+          reason: reason,
+        );
+        final newStock = (result['stock_on_hand'] as num?)?.toInt();
+        await syncFromServer();
+        VendorProduct? product;
+        for (final p in state) {
+          if (p.id == productId) {
+            product = p;
+            break;
+          }
+        }
+        _stockEventController.add(VendorStockUpdateEvent(
+          vendorId: vendorId,
+          productId: productId,
+          productName: product?.name ?? 'Product',
+          newStock: newStock ?? product?.stockOnHand ?? 0,
+          delta: delta,
+          updatedBy: reason,
+          reason: reason,
+          timestamp: DateTime.now(),
+        ));
+        ref.read(vendorInventoryErrorProvider.notifier).setError(null);
+      } catch (e) {
+        ref.read(vendorInventoryErrorProvider.notifier).setError(e.toString());
+        rethrow;
+      }
+      return;
+    }
 
     VendorProduct? modifiedProduct;
-    final currentList = _isolatedVendorDbs[vendorId] ?? [];
+    final currentList = List<VendorProduct>.from(_demoVendorDbs[vendorId] ?? []);
     final updatedList = [
       for (final p in currentList)
         if (p.id == productId) ...[
@@ -341,10 +402,7 @@ class VendorInventoryNotifier extends Notifier<List<VendorProduct>> {
         ] else
           p
     ];
-
-    _isolatedVendorDbs[vendorId] = updatedList;
-    _rebuildBarcodeIndex(updatedList);
-    state = updatedList;
+    _writeList(vendorId, updatedList);
 
     if (modifiedProduct != null) {
       _stockEventController.add(VendorStockUpdateEvent(
@@ -360,12 +418,12 @@ class VendorInventoryNotifier extends Notifier<List<VendorProduct>> {
     }
   }
 
-  /// Real-time inventory deduction when Cashier tenders POS order
   void deductSoldQuantities(Map<int, int> itemsSold) {
     final currentVendor = ref.read(currentVendorProvider);
     final vendorId = currentVendor.vendorId;
-
-    final currentList = _isolatedVendorDbs[vendorId] ?? [];
+    final currentList = List<VendorProduct>.from(
+      _isLive ? (_liveCache[vendorId] ?? state) : (_demoVendorDbs[vendorId] ?? []),
+    );
     final updatedList = [
       for (final p in currentList)
         if (itemsSold.containsKey(p.id)) ...[
@@ -387,9 +445,6 @@ class VendorInventoryNotifier extends Notifier<List<VendorProduct>> {
         ] else
           p
     ];
-
-    _isolatedVendorDbs[vendorId] = updatedList;
-    _rebuildBarcodeIndex(updatedList);
-    state = updatedList;
+    _writeList(vendorId, updatedList);
   }
 }

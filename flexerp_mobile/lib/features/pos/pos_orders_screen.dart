@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/localization/lk_formatters.dart';
 import '../../core/theme/flex_colors.dart';
 import '../../core/widgets/flex_app_bar.dart';
 import '../../data/models/pos_order.dart';
@@ -171,7 +172,7 @@ class _PosOrdersScreenState extends ConsumerState<PosOrdersScreen> {
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                    'Rs. ${order.totalAmount.toStringAsFixed(2)}',
+                                    LkFormatters.formatLkr(order.totalAmount),
                                     style: const TextStyle(
                                       color: FlexColors.textPrimary,
                                       fontSize: 16,
@@ -268,7 +269,7 @@ class _PosOrdersScreenState extends ConsumerState<PosOrdersScreen> {
                               style: const TextStyle(color: FlexColors.textSecondary, fontSize: 12),
                             ),
                           ),
-                          Text('Rs. ${l.subtotal.toStringAsFixed(0)}', style: const TextStyle(color: FlexColors.textPrimary, fontSize: 12)),
+                          Text(LkFormatters.formatLkr(l.subtotal), style: const TextStyle(color: FlexColors.textPrimary, fontSize: 12)),
                         ],
                       ),
                     )),
@@ -277,7 +278,7 @@ class _PosOrdersScreenState extends ConsumerState<PosOrdersScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const Text('Total Paid:', style: TextStyle(color: FlexColors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)),
-                  Text('Rs. ${order.totalAmount.toStringAsFixed(2)}', style: const TextStyle(color: FlexColors.primaryLight, fontSize: 16, fontWeight: FontWeight.bold)),
+                  Text(LkFormatters.formatLkr(order.totalAmount), style: const TextStyle(color: FlexColors.primaryLight, fontSize: 16, fontWeight: FontWeight.bold)),
                 ],
               ),
               const SizedBox(height: 20),

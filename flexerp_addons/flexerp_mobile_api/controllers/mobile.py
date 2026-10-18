@@ -51,6 +51,10 @@ class FlexerpMobileController(http.Controller):
     def admin_approvals(self, limit=40, company_id=None, **kwargs):
         return self._api().list_approvals(limit=limit, company_id=company_id)
 
+    @route('/flexerp/mobile/admin/approvals/action', type='jsonrpc', auth='user', methods=['POST'])
+    def admin_approvals_action(self, activity_id=None, action='approve', **kwargs):
+        return self._api().approval_action(activity_id, action=action)
+
     # POS
     @route('/flexerp/mobile/pos/configs', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
     def pos_configs(self, **kwargs):

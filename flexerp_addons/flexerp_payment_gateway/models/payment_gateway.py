@@ -82,6 +82,7 @@ class FlexerpPaymentGateway(models.AbstractModel):
                 'reference': link.name,
                 'pay_url': pay_url,
                 'amount': link.amount,
+                'currency': link.currency_name or company.currency_id.name or 'LKR',
                 'provider': cfg['provider'],
                 'mode': 'stub',
                 'message': 'Stub pay link (configure endpoint for live LankaQR/JustPay).',
@@ -124,6 +125,7 @@ class FlexerpPaymentGateway(models.AbstractModel):
                 'reference': link.name,
                 'pay_url': pay_url,
                 'amount': link.amount,
+                'currency': link.currency_name or company.currency_id.name or 'LKR',
                 'provider': cfg['provider'],
                 'mode': 'live',
             }
@@ -169,6 +171,7 @@ class FlexerpPaymentGateway(models.AbstractModel):
             'reference': link.name,
             'pay_url': link.pay_url,
             'amount': link.amount,
+            'currency': link.currency_name or (link.company_id.currency_id.name if link.company_id.currency_id else 'LKR'),
             'provider': link.provider,
             'endpoint_configured': bool(cfg['endpoint']),
         }

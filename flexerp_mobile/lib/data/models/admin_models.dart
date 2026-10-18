@@ -45,6 +45,8 @@ class PendingApproval {
   final double amount; // LKR
   final String reason;
   final DateTime requestedAt;
+  final String? resModel;
+  final int? resId;
 
   const PendingApproval({
     required this.id,
@@ -55,5 +57,7 @@ class PendingApproval {
     required this.amount,
     required this.reason,
     required this.requestedAt,
+    this.resModel,
+    this.resId,
   });
 }

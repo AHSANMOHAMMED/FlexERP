@@ -135,6 +135,75 @@ class VendorsNotifier extends Notifier<List<VendorTenant>> {
     state = [...state, newVendor];
   }
 
+  Future<VendorTenant> provisionVendor({
+    required String name,
+    required String vendorCode,
+    required String email,
+    String phone = '',
+    String city = '',
+    String address = '',
+    String? taxTin,
+    String preset = 'small_shop',
+    VendorFeatures? features,
+  }) async {
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user != null && !user.isDemo && api != null) {
+      final payload = <String, dynamic>{
+        'name': name,
+        'vendor_code': vendorCode,
+        'email': email,
+        'phone': phone,
+        'city': city,
+        'street': address,
+        'address': address,
+        if (taxTin != null) 'tax_tin': taxTin,
+        'preset': preset,
+        if (features != null) 'features': features.toApiMap(),
+      };
+      final created = await api.provisionTenant(payload);
+      final companyPayload = created['company'] is Map
+          ? Map<String, dynamic>.from(created['company'] as Map)
+          : created;
+      final mapped = VendorTenant.fromApi(companyPayload);
+      // Custom feature matrix after preset when caller provided toggles.
+      if (features != null && preset == 'custom') {
+        await updateVendorFeatures(mapped.vendorId, features);
+        return state.firstWhere((v) => v.vendorId == mapped.vendorId, orElse: () => mapped);
+      }
+      state = [...state.where((v) => v.id != mapped.id), mapped];
+      return mapped;
+    }
+    final demo = VendorTenant(
+      id: DateTime.now().millisecondsSinceEpoch,
+      vendorId: vendorCode,
+      name: name,
+      email: email,
+      phone: phone,
+      city: city,
+      address: address,
+      taxTin: taxTin ?? 'TIN-DEMO',
+      createdAt: DateTime.now(),
+      assignedAdminName: 'Store Admin',
+      cashierCount: 1,
+      features: features ?? VendorFeatures.smallShop,
+      preset: preset,
+    );
+    addVendor(demo);
+    return demo;
+  }
+
+  Future<void> deactivateVendor(VendorTenant vendor) async {
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user != null && !user.isDemo && api != null && vendor.id > 0) {
+      await api.deactivateTenant(vendor.id);
+      await syncFromServer();
+      return;
+    }
+    toggleVendorStatus(vendor.vendorId);
+  }
+
   Future<void> updateVendorFeatures(String vendorId, VendorFeatures features) async {
     state = [
       for (final v in state)

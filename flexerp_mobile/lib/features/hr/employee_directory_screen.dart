@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/localization/lk_formatters.dart';
 import '../../core/theme/flex_colors.dart';
 import '../../core/widgets/flex_app_bar.dart';
 import '../../data/repositories/hr_repository.dart';
@@ -238,11 +239,18 @@ class _EmployeeDirectoryScreenState extends ConsumerState<EmployeeDirectoryScree
                                       ),
                                       onPressed: () {
                                         ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(content: Text('Calling ${emp.workPhone}...')),
+                                          SnackBar(
+                                            content: Text(
+                                              'Calling ${LkFormatters.formatLkPhone(emp.workPhone)}...',
+                                            ),
+                                          ),
                                         );
                                       },
                                       icon: const Icon(Icons.phone, size: 14, color: FlexColors.primaryLight),
-                                      label: Text(emp.workPhone, style: const TextStyle(fontSize: 11)),
+                                      label: Text(
+                                        LkFormatters.formatLkPhone(emp.workPhone),
+                                        style: const TextStyle(fontSize: 11),
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 8),

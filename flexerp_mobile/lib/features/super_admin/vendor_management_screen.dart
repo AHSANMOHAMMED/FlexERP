@@ -202,7 +202,7 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
                       label: 'Create & Provision Tenant DB',
                       icon: Icons.domain_add,
                       height: 48,
-                      onPressed: () {
+                      onPressed: () async {
                         if (nameCtrl.text.trim().isEmpty || idCtrl.text.trim().isEmpty) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
@@ -213,43 +213,52 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
                           return;
                         }
 
-                        final newVendor = VendorTenant(
-                          id: DateTime.now().millisecondsSinceEpoch,
-                          vendorId: idCtrl.text.trim(),
-                          name: nameCtrl.text.trim(),
-                          email: emailCtrl.text.trim().isNotEmpty
-                              ? emailCtrl.text.trim()
-                              : 'admin@${idCtrl.text.trim().toLowerCase()}.lk',
-                          phone: '+94 11 765 4321',
-                          city: 'Colombo',
-                          address: 'Retail Complex, Sri Lanka',
-                          taxTin: 'TIN-${DateTime.now().millisecondsSinceEpoch.toString().substring(5)}-V',
-                          createdAt: DateTime.now(),
-                          assignedAdminName: 'Store Admin',
-                          cashierCount: 2,
-                          features: VendorFeatures(
-                            enablePos: enablePos,
-                            enableInventory: enableInventory,
-                            enableSales: enableSales,
-                            enableCrm: enableCrm,
-                            enableInvoicing: enableInvoicing,
-                            enablePayments: enablePayments,
-                            enableWarehouse: enableWarehouse,
-                            enablePurchase: enablePurchase,
-                            enableHr: enableHr,
-                            enableWebsite: enableWebsite,
-                            enableExecutive: enableExecutive,
-                          ),
+                        final features = VendorFeatures(
+                          enablePos: enablePos,
+                          enableInventory: enableInventory,
+                          enableSales: enableSales,
+                          enableCrm: enableCrm,
+                          enableInvoicing: enableInvoicing,
+                          enablePayments: enablePayments,
+                          enableWarehouse: enableWarehouse,
+                          enablePurchase: enablePurchase,
+                          enableHr: enableHr,
+                          enableWebsite: enableWebsite,
+                          enableExecutive: enableExecutive,
                         );
 
-                        ref.read(vendorsProvider.notifier).addVendor(newVendor);
-                        Navigator.pop(ctx);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Vendor ${newVendor.name} (${newVendor.vendorId}) created!'),
-                            backgroundColor: FlexColors.success,
-                          ),
-                        );
+                        try {
+                          final created = await ref.read(vendorsProvider.notifier).provisionVendor(
+                                name: nameCtrl.text.trim(),
+                                vendorCode: idCtrl.text.trim(),
+                                email: emailCtrl.text.trim().isNotEmpty
+                                    ? emailCtrl.text.trim()
+                                    : 'admin@${idCtrl.text.trim().toLowerCase()}.lk',
+                                phone: '+94 11 765 4321',
+                                city: 'Colombo',
+                                address: 'Retail Complex, Sri Lanka',
+                                taxTin:
+                                    'TIN-${DateTime.now().millisecondsSinceEpoch.toString().substring(5)}-V',
+                                preset: 'custom',
+                                features: features,
+                              );
+                          if (!context.mounted) return;
+                          Navigator.pop(ctx);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Vendor ${created.name} (${created.vendorId}) provisioned'),
+                              backgroundColor: FlexColors.success,
+                            ),
+                          );
+                        } catch (e) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Provision failed: $e'),
+                              backgroundColor: FlexColors.danger,
+                            ),
+                          );
+                        }
                       },
                     ),
                   ],
@@ -557,6 +566,30 @@ class _VendorManagementScreenState extends ConsumerState<VendorManagementScreen>
                     Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
+                        TextButton.icon(
+                          onPressed: () async {
+                            try {
+                              await ref.read(vendorsProvider.notifier).deactivateVendor(vendor);
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Deactivated ${vendor.name}'),
+                                  backgroundColor: FlexColors.warning,
+                                ),
+                              );
+                            } catch (e) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Deactivate failed: $e'),
+                                  backgroundColor: FlexColors.danger,
+                                ),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.block, size: 18, color: FlexColors.danger),
+                          label: const Text('Deactivate', style: TextStyle(fontSize: 12, color: FlexColors.danger)),
+                        ),
                         TextButton.icon(
                           onPressed: () => _showEditFeaturesModal(context, vendor),
                           icon: const Icon(Icons.toggle_on, size: 18, color: FlexColors.primaryLight),

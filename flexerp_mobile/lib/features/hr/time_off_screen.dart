@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/flex_colors.dart';
 import '../../core/widgets/flex_app_bar.dart';
 import '../../data/models/hr_models.dart';
+import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/hr_repository.dart';
 
 class TimeOffScreen extends ConsumerStatefulWidget {
@@ -236,10 +237,34 @@ class _TimeOffScreenState extends ConsumerState<TimeOffScreen> {
     );
   }
 
-  void _showApplyLeaveModal(BuildContext context) {
-    String selectedType = 'Annual Leave';
+  Future<void> _showApplyLeaveModal(BuildContext context) async {
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    List<Map<String, dynamic>> leaveTypes = [];
+    if (user != null && !user.isDemo && api != null) {
+      try {
+        leaveTypes = await api.hrLeaveTypes();
+      } catch (e) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Leave types failed: $e'), backgroundColor: FlexColors.danger),
+        );
+        return;
+      }
+    }
+    if (leaveTypes.isEmpty) {
+      leaveTypes = [
+        {'id': 0, 'name': 'Annual Leave'},
+        {'id': 0, 'name': 'Casual Leave'},
+        {'id': 0, 'name': 'Medical Leave'},
+      ];
+    }
+
+    var selectedId = (leaveTypes.first['id'] as num?)?.toInt() ?? 0;
+    var selectedName = leaveTypes.first['name']?.toString() ?? 'Leave';
     final reasonController = TextEditingController();
 
+    if (!context.mounted) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -272,15 +297,25 @@ class _TimeOffScreenState extends ConsumerState<TimeOffScreen> {
                   const SizedBox(height: 16),
                   const Text('Leave Type', style: TextStyle(color: FlexColors.textSecondary, fontSize: 12)),
                   const SizedBox(height: 6),
-                  DropdownButtonFormField<String>(
-                    value: selectedType,
+                  DropdownButtonFormField<int>(
+                    value: selectedId,
                     dropdownColor: FlexColors.surface,
                     style: const TextStyle(color: FlexColors.textPrimary, fontSize: 13),
-                    items: ['Annual Leave', 'Casual Leave', 'Medical Leave'].map((t) {
-                      return DropdownMenuItem(value: t, child: Text(t));
+                    items: leaveTypes.map((t) {
+                      final id = (t['id'] as num?)?.toInt() ?? 0;
+                      final name = t['name']?.toString() ?? 'Leave';
+                      return DropdownMenuItem(value: id, child: Text(name));
                     }).toList(),
                     onChanged: (val) {
-                      if (val != null) setModalState(() => selectedType = val);
+                      if (val == null) return;
+                      final match = leaveTypes.firstWhere(
+                        (t) => (t['id'] as num?)?.toInt() == val,
+                        orElse: () => leaveTypes.first,
+                      );
+                      setModalState(() {
+                        selectedId = val;
+                        selectedName = match['name']?.toString() ?? 'Leave';
+                      });
                     },
                     decoration: InputDecoration(
                       filled: true,
@@ -320,23 +355,39 @@ class _TimeOffScreenState extends ConsumerState<TimeOffScreen> {
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
-                      onPressed: () {
+                      onPressed: () async {
                         final newRequest = LeaveRequest(
                           id: DateTime.now().millisecondsSinceEpoch,
-                          employeeName: 'Anushka Wickramasinghe',
-                          employeeId: 806,
-                          leaveType: selectedType,
+                          employeeName: user?.name ?? 'Employee',
+                          employeeId: user?.uid ?? 0,
+                          leaveType: selectedName,
                           dateFrom: DateTime.now().add(const Duration(days: 2)),
                           dateTo: DateTime.now().add(const Duration(days: 3)),
                           numberOfDays: 2.0,
                           status: 'confirm',
-                          reason: reasonController.text.isNotEmpty ? reasonController.text : 'Personal matters',
+                          reason: reasonController.text.isNotEmpty
+                              ? reasonController.text
+                              : 'Personal matters',
                         );
-                        ref.read(leaveRequestsProvider.notifier).submitLeaveRequest(newRequest);
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Leave application submitted for supervisor approval')),
-                        );
+                        try {
+                          await ref.read(leaveRequestsProvider.notifier).submitLeaveRequest(
+                                newRequest,
+                                holidayStatusId: selectedId > 0 ? selectedId : null,
+                              );
+                          if (!context.mounted) return;
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Leave application submitted')),
+                          );
+                        } catch (e) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Submit failed: $e'),
+                              backgroundColor: FlexColors.danger,
+                            ),
+                          );
+                        }
                       },
                       child: const Text('Submit Application', style: TextStyle(fontWeight: FontWeight.bold)),
                     ),

@@ -20,6 +20,7 @@ class StockPickingsNotifier extends Notifier<List<StockPicking>> {
 
     final records = await api.stockPickings();
     final pickings = <StockPicking>[];
+    final detailErrors = <String>[];
     for (final rec in records) {
       List<PickingMoveLine> lines = const [];
       try {
@@ -36,7 +37,9 @@ class StockPickingsNotifier extends Notifier<List<StockPicking>> {
             scannedQty: (map['quantity'] as num?)?.toDouble() ?? 0.0,
           );
         }).toList();
-      } catch (_) {}
+      } catch (e) {
+        detailErrors.add('${rec['name'] ?? rec['id']}: $e');
+      }
       pickings.add(StockPicking(
         id: rec['id'] as int? ?? 0,
         name: rec['name']?.toString() ?? 'WH/OUT/000',
@@ -51,6 +54,12 @@ class StockPickingsNotifier extends Notifier<List<StockPicking>> {
       ));
     }
     state = pickings;
+    if (detailErrors.isNotEmpty) {
+      throw OdooException(
+        'Loaded ${pickings.length} pickings; ${detailErrors.length} detail fetch(es) failed. '
+        '${detailErrors.first}',
+      );
+    }
   }
 
   void incrementScannedQty(int pickingId, int lineId) {

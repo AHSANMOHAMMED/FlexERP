@@ -1,9 +1,79 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import '../models/attendance_record.dart';
 import '../models/hr_models.dart';
 import '../mock/mock_sri_lanka_data.dart';
 import '../../core/offline/offline_queue.dart';
 import 'auth_repository.dart';
+
+/// Colombo HQ fallback when device GPS is unavailable or denied.
+const double kDefaultAttendanceLat = 6.9271;
+const double kDefaultAttendanceLon = 79.8612;
+
+class AttendanceGpsFix {
+  const AttendanceGpsFix({
+    required this.lat,
+    required this.lon,
+    required this.usedDefault,
+    required this.label,
+  });
+  final double lat;
+  final double lon;
+  final bool usedDefault;
+  final String label;
+}
+
+Future<AttendanceGpsFix> resolveAttendanceGps() async {
+  try {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      return const AttendanceGpsFix(
+        lat: kDefaultAttendanceLat,
+        lon: kDefaultAttendanceLon,
+        usedDefault: true,
+        label: 'Colombo HQ (GPS unavailable — defaulted)',
+      );
+    }
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return const AttendanceGpsFix(
+        lat: kDefaultAttendanceLat,
+        lon: kDefaultAttendanceLon,
+        usedDefault: true,
+        label: 'Colombo HQ (location permission denied — defaulted)',
+      );
+    }
+    final pos = await Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium),
+    );
+    return AttendanceGpsFix(
+      lat: pos.latitude,
+      lon: pos.longitude,
+      usedDefault: false,
+      label: 'Device GPS (${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)})',
+    );
+  } catch (_) {
+    return const AttendanceGpsFix(
+      lat: kDefaultAttendanceLat,
+      lon: kDefaultAttendanceLon,
+      usedDefault: true,
+      label: 'Colombo HQ (GPS error — defaulted)',
+    );
+  }
+}
+
+class AttendanceGpsNoteNotifier extends Notifier<String?> {
+  @override
+  String? build() => null;
+  void setNote(String? v) => state = v;
+}
+
+final attendanceGpsNoteProvider =
+    NotifierProvider<AttendanceGpsNoteNotifier, String?>(AttendanceGpsNoteNotifier.new);
 
 class AttendanceNotifier extends Notifier<AttendanceRecord?> {
   @override
@@ -14,25 +84,35 @@ class AttendanceNotifier extends Notifier<AttendanceRecord?> {
   }
 
   Future<void> checkIn({required String employeeName, required bool isInsideGeofence}) async {
+    final gps = await resolveAttendanceGps();
+    ref.read(attendanceGpsNoteProvider.notifier).setNote(
+          gps.usedDefault
+              ? 'Using Colombo HQ default coordinates — device location unavailable.'
+              : null,
+        );
     final user = ref.read(currentUserProvider);
     final api = ref.read(flexerpApiProvider);
     if (user != null && !user.isDemo && api != null) {
       try {
-        final result = await api.hrAttendance(checkIn: true, latitude: 6.9271, longitude: 79.8612);
+        final result = await api.hrAttendance(
+          checkIn: true,
+          latitude: gps.lat,
+          longitude: gps.lon,
+        );
         state = AttendanceRecord(
           id: result['id'] as int? ?? DateTime.now().millisecondsSinceEpoch,
           employeeName: employeeName,
           checkIn: DateTime.tryParse(result['check_in']?.toString() ?? '') ?? DateTime.now(),
-          checkInLat: 6.9271,
-          checkInLon: 79.8612,
-          geofenceLocationName: 'Colombo HQ Office (Radius 100m)',
+          checkInLat: gps.lat,
+          checkInLon: gps.lon,
+          geofenceLocationName: gps.label,
           isInsideGeofence: isInsideGeofence,
         );
         return;
       } catch (_) {
         await ref.read(offlineQueueProvider.notifier).enqueue(
               type: 'hr_attendance',
-              payload: {'check_in': true, 'latitude': 6.9271, 'longitude': 79.8612},
+              payload: {'check_in': true, 'latitude': gps.lat, 'longitude': gps.lon},
             );
       }
     }
@@ -40,20 +120,30 @@ class AttendanceNotifier extends Notifier<AttendanceRecord?> {
       id: DateTime.now().millisecondsSinceEpoch,
       employeeName: employeeName,
       checkIn: DateTime.now(),
-      checkInLat: 6.9271,
-      checkInLon: 79.8612,
-      geofenceLocationName: 'Colombo HQ Office (Radius 100m)',
+      checkInLat: gps.lat,
+      checkInLon: gps.lon,
+      geofenceLocationName: gps.label,
       isInsideGeofence: isInsideGeofence,
     );
   }
 
   Future<void> checkOut() async {
     if (state == null) return;
+    final gps = await resolveAttendanceGps();
+    ref.read(attendanceGpsNoteProvider.notifier).setNote(
+          gps.usedDefault
+              ? 'Using Colombo HQ default coordinates — device location unavailable.'
+              : null,
+        );
     final user = ref.read(currentUserProvider);
     final api = ref.read(flexerpApiProvider);
     if (user != null && !user.isDemo && api != null) {
       try {
-        final result = await api.hrAttendance(checkIn: false, latitude: 6.9271, longitude: 79.8612);
+        final result = await api.hrAttendance(
+          checkIn: false,
+          latitude: gps.lat,
+          longitude: gps.lon,
+        );
         state = AttendanceRecord(
           id: result['id'] as int? ?? state!.id,
           employeeName: state!.employeeName,
@@ -68,7 +158,7 @@ class AttendanceNotifier extends Notifier<AttendanceRecord?> {
       } catch (_) {
         await ref.read(offlineQueueProvider.notifier).enqueue(
               type: 'hr_attendance',
-              payload: {'check_in': false, 'latitude': 6.9271, 'longitude': 79.8612},
+              payload: {'check_in': false, 'latitude': gps.lat, 'longitude': gps.lon},
             );
       }
     }
@@ -115,7 +205,9 @@ class EmployeeDirectoryNotifier extends Notifier<List<EmployeeProfile>> {
           epfNumber: 'EPF/${item['id']}',
         );
       }).toList();
-    } catch (_) {}
+    } catch (e) {
+      rethrow;
+    }
   }
 }
 
@@ -156,7 +248,9 @@ class LeaveRequestsNotifier extends Notifier<List<LeaveRequest>> {
           reason: 'Leave request',
         );
       }).toList();
-    } catch (_) {}
+    } catch (e) {
+      rethrow;
+    }
   }
 
   Future<void> submitLeaveRequest(LeaveRequest request, {int? holidayStatusId}) async {
@@ -194,7 +288,10 @@ class LeaveRequestsNotifier extends Notifier<List<LeaveRequest>> {
           else
             l
       ];
-    } catch (_) {}
+    } catch (e) {
+      state = state.where((l) => l.id != request.id).toList();
+      rethrow;
+    }
   }
 }
 

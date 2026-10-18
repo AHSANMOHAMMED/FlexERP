@@ -65,6 +65,9 @@ class AuthUser {
   final String vendorId;
   final VendorFeatures features;
   final bool enforceHttps;
+  /// Company currency from bootstrap (Sri Lanka tenants: LKR).
+  final String currencyName;
+  final String currencySymbol;
 
   const AuthUser({
     required this.uid,
@@ -81,6 +84,8 @@ class AuthUser {
     this.vendorId = 'VND-001',
     this.features = const VendorFeatures(),
     this.enforceHttps = false,
+    this.currencyName = 'LKR',
+    this.currencySymbol = 'Rs',
   });
 
   AuthUser copyWith({
@@ -98,6 +103,8 @@ class AuthUser {
     String? vendorId,
     VendorFeatures? features,
     bool? enforceHttps,
+    String? currencyName,
+    String? currencySymbol,
   }) {
     return AuthUser(
       uid: uid ?? this.uid,
@@ -114,6 +121,8 @@ class AuthUser {
       vendorId: vendorId ?? this.vendorId,
       features: features ?? this.features,
       enforceHttps: enforceHttps ?? this.enforceHttps,
+      currencyName: currencyName ?? this.currencyName,
+      currencySymbol: currencySymbol ?? this.currencySymbol,
     );
   }
 }

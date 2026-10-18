@@ -98,6 +98,17 @@ class FlexerpMobileApi {
     return [];
   }
 
+  Future<Map<String, dynamic>> approvalAction({
+    required int activityId,
+    required String action,
+  }) async {
+    final res = await client.callRoute('/flexerp/mobile/admin/approvals/action', {
+      'activity_id': activityId,
+      'action': action,
+    });
+    return Map<String, dynamic>.from(res as Map);
+  }
+
   // ---- Ops ----
   Future<Map<String, dynamic>> opsOverview() async {
     final res = await client.callRoute('/flexerp/mobile/ops/overview', {});

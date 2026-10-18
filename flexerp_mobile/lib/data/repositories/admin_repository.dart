@@ -20,29 +20,55 @@ class PendingApprovalsNotifier extends Notifier<List<PendingApproval>> {
     final user = ref.read(currentUserProvider);
     final api = ref.read(flexerpApiProvider);
     if (user == null || user.isDemo || api == null) return;
-    final rows = await api.listApprovals();
-    state = rows.map((r) {
-      return PendingApproval(
-        id: r['id'] as int? ?? 0,
-        type: r['summary']?.toString() ?? 'Activity',
-        reference: '${r['res_model'] ?? 'mail.activity'}/${r['res_id'] ?? r['id']}',
-        requestedBy: r['user_name']?.toString() ?? 'User',
-        customerOrVendor: r['note']?.toString().isNotEmpty == true
-            ? r['note'].toString()
-            : 'Activity',
-        amount: 0,
-        reason: r['note']?.toString() ?? '',
-        requestedAt: DateTime.tryParse(r['date_deadline']?.toString() ?? '') ?? DateTime.now(),
-      );
-    }).toList();
+    try {
+      final rows = await api.listApprovals();
+      state = rows.map((r) {
+        return PendingApproval(
+          id: r['id'] as int? ?? 0,
+          type: r['summary']?.toString() ?? 'Activity',
+          reference: '${r['res_model'] ?? 'mail.activity'}/${r['res_id'] ?? r['id']}',
+          requestedBy: r['user_name']?.toString() ?? 'User',
+          customerOrVendor: r['note']?.toString().isNotEmpty == true
+              ? r['note'].toString()
+              : 'Activity',
+          amount: 0,
+          reason: r['note']?.toString() ?? '',
+          requestedAt: DateTime.tryParse(r['date_deadline']?.toString() ?? '') ?? DateTime.now(),
+          resModel: r['res_model']?.toString(),
+          resId: (r['res_id'] as num?)?.toInt(),
+        );
+      }).toList();
+    } catch (e) {
+      rethrow;
+    }
   }
 
-  void approve(int id) {
+  Future<void> approve(int id) async {
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    final previous = state;
     state = state.where((item) => item.id != id).toList();
+    if (user == null || user.isDemo || api == null) return;
+    try {
+      await api.approvalAction(activityId: id, action: 'approve');
+    } catch (e) {
+      state = previous;
+      rethrow;
+    }
   }
 
-  void reject(int id) {
+  Future<void> reject(int id) async {
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    final previous = state;
     state = state.where((item) => item.id != id).toList();
+    if (user == null || user.isDemo || api == null) return;
+    try {
+      await api.approvalAction(activityId: id, action: 'reject');
+    } catch (e) {
+      state = previous;
+      rethrow;
+    }
   }
 }
 
@@ -220,6 +246,20 @@ class OpsOverviewNotifier extends Notifier<OpsOverviewState> {
     final result = await api.opsRestart();
     await refresh();
     return result;
+  }
+
+  Future<Map<String, dynamic>> stop() async {
+    final api = ref.read(flexerpApiProvider);
+    if (api == null) return {'status': 'not_configured'};
+    final result = await api.opsStop();
+    await refresh();
+    return result;
+  }
+
+  Future<Map<String, dynamic>> pool() async {
+    final api = ref.read(flexerpApiProvider);
+    if (api == null) return {'status': 'not_configured'};
+    return api.opsPool();
   }
 }
 

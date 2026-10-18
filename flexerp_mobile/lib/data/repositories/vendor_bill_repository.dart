@@ -36,7 +36,9 @@ class VendorBillsNotifier extends Notifier<List<VendorBill>> {
           paymentReference: '',
         );
       }).toList();
-    } catch (_) {}
+    } catch (e) {
+      rethrow;
+    }
   }
 
   Future<void> markAsPaid(int billId) async {
@@ -46,7 +48,9 @@ class VendorBillsNotifier extends Notifier<List<VendorBill>> {
     if (user != null && !user.isDemo && api != null) {
       try {
         await api.registerPayment(moveId: billId, amount: bill.amountDue);
-      } catch (_) {}
+      } catch (e) {
+        rethrow;
+      }
     }
     state = [
       for (final b in state)

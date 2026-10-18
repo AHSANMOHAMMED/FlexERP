@@ -154,6 +154,60 @@ class _AdminHubScreenState extends ConsumerState<AdminHubScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _opsBusy
+                              ? null
+                              : () async {
+                                  setState(() => _opsBusy = true);
+                                  try {
+                                    final result =
+                                        await ref.read(opsOverviewProvider.notifier).stop();
+                                    if (!mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Stop: ${result['status'] ?? result}'),
+                                      ),
+                                    );
+                                  } finally {
+                                    if (mounted) setState(() => _opsBusy = false);
+                                  }
+                                },
+                          icon: const Icon(Icons.stop_circle_outlined, size: 16),
+                          label: const Text('Stop'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _opsBusy
+                              ? null
+                              : () async {
+                                  setState(() => _opsBusy = true);
+                                  try {
+                                    final result =
+                                        await ref.read(opsOverviewProvider.notifier).pool();
+                                    if (!mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Pool: workers=${result['workers_configured'] ?? result['status'] ?? result}',
+                                        ),
+                                      ),
+                                    );
+                                  } finally {
+                                    if (mounted) setState(() => _opsBusy = false);
+                                  }
+                                },
+                          icon: const Icon(Icons.storage_outlined, size: 16),
+                          label: const Text('Pool'),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -366,11 +420,22 @@ class _AdminHubScreenState extends ConsumerState<AdminHubScreen> {
                                 icon: Icons.check,
                                 variant: FlexButtonVariant.primary,
                                 height: 36,
-                                onPressed: () {
-                                  ref.read(pendingApprovalsProvider.notifier).approve(approval.id);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Approved ${approval.reference}')),
-                                  );
+                                onPressed: () async {
+                                  try {
+                                    await ref.read(pendingApprovalsProvider.notifier).approve(approval.id);
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Approved ${approval.reference}')),
+                                    );
+                                  } catch (e) {
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Approve failed: $e'),
+                                        backgroundColor: FlexColors.danger,
+                                      ),
+                                    );
+                                  }
                                 },
                               ),
                             ),
@@ -381,8 +446,18 @@ class _AdminHubScreenState extends ConsumerState<AdminHubScreen> {
                                 icon: Icons.close,
                                 variant: FlexButtonVariant.danger,
                                 height: 36,
-                                onPressed: () {
-                                  ref.read(pendingApprovalsProvider.notifier).reject(approval.id);
+                                onPressed: () async {
+                                  try {
+                                    await ref.read(pendingApprovalsProvider.notifier).reject(approval.id);
+                                  } catch (e) {
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Reject failed: $e'),
+                                        backgroundColor: FlexColors.danger,
+                                      ),
+                                    );
+                                  }
                                 },
                               ),
                             ),

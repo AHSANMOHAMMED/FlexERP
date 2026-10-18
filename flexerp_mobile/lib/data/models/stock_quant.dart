@@ -1,5 +1,7 @@
 class StockQuant {
   final int id;
+  final int productId;
+  final int? locationId;
   final String productName;
   final String productSku;
   final String locationName;
@@ -12,6 +14,8 @@ class StockQuant {
 
   const StockQuant({
     required this.id,
+    this.productId = 0,
+    this.locationId,
     required this.productName,
     required this.productSku,
     required this.locationName,

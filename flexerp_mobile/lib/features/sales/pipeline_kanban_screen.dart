@@ -21,20 +21,37 @@ class PipelineKanbanScreen extends ConsumerStatefulWidget {
 }
 
 class _PipelineKanbanScreenState extends ConsumerState<PipelineKanbanScreen> {
-  final List<String> _stages = ['New', 'Qualified', 'Proposition', 'Won'];
-  String _selectedStage = 'Proposition';
+  String _selectedStage = 'New';
   String _searchQuery = '';
+  String? _syncError;
 
   @override
   void initState() {
     super.initState();
-    Future.microtask(() => ref.read(crmLeadsProvider.notifier).syncFromOdoo());
+    Future.microtask(() async {
+      try {
+        await ref.read(crmLeadsProvider.notifier).syncFromOdoo();
+        if (!mounted) return;
+        final stages = ref.read(crmLeadsProvider.notifier).stageNames;
+        if (stages.isNotEmpty) setState(() => _selectedStage = stages.first);
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _syncError = e.toString());
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('CRM sync failed: $e'), backgroundColor: FlexColors.danger),
+        );
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final currentBranch = ref.watch(currentBranchProvider);
     final allLeads = ref.watch(crmLeadsProvider);
+    final stages = ref.read(crmLeadsProvider.notifier).stageNames;
+    if (!stages.contains(_selectedStage) && stages.isNotEmpty) {
+      _selectedStage = stages.first;
+    }
 
     final filteredLeads = allLeads.where((lead) {
       final matchesStage = lead.stage == _selectedStage;
@@ -51,10 +68,17 @@ class _PipelineKanbanScreenState extends ConsumerState<PipelineKanbanScreen> {
         subtitle: 'Field Sales Opportunities',
         currentBranch: currentBranch,
         onSync: () async {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Syncing CRM Leads with Odoo...')),
-          );
-          await ref.read(crmLeadsProvider.notifier).syncFromOdoo();
+          try {
+            await ref.read(crmLeadsProvider.notifier).syncFromOdoo();
+            if (!mounted) return;
+            setState(() => _syncError = null);
+          } catch (e) {
+            if (!mounted) return;
+            setState(() => _syncError = e.toString());
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('CRM sync failed: $e'), backgroundColor: FlexColors.danger),
+            );
+          }
         },
         actions: [
           IconButton(
@@ -77,15 +101,20 @@ class _PipelineKanbanScreenState extends ConsumerState<PipelineKanbanScreen> {
             ),
           ),
 
+          if (_syncError != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(_syncError!, style: const TextStyle(color: FlexColors.danger, fontSize: 11)),
+            ),
           // Stage Selector Pills
           SizedBox(
             height: 48,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: _stages.length,
+              itemCount: stages.length,
               itemBuilder: (context, index) {
-                final stage = _stages[index];
+                final stage = stages[index];
                 final isSelected = stage == _selectedStage;
                 final count = allLeads.where((l) => l.stage == stage).length;
                 final stageTotal = allLeads

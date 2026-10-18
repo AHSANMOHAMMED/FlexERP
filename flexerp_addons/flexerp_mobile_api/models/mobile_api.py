@@ -139,6 +139,7 @@ class FlexerpMobileApi(models.AbstractModel):
         min_version = api.env['ir.config_parameter'].sudo().get_param(
             'flexerp.mobile.min_version', '1.0.0',
         )
+        currency = company.currency_id
         return {
             'uid': user.id,
             'name': user.name,
@@ -148,6 +149,8 @@ class FlexerpMobileApi(models.AbstractModel):
             'company_id': company.id,
             'company_name': company.name,
             'vendor_id': company.flexerp_vendor_code or f'VND-{company.id:03d}',
+            'currency_name': currency.name if currency else 'LKR',
+            'currency_symbol': currency.symbol if currency else 'Rs',
             'features': features,
             'companies': companies,
             'app_min_version': min_version,
@@ -239,6 +242,47 @@ class FlexerpMobileApi(models.AbstractModel):
             'res_id': a.res_id,
             'user_name': a.user_id.name,
         } for a in activities]
+
+    @api.model
+    def approval_action(self, activity_id, action='approve'):
+        """Approve or reject a pending mail.activity and related business record."""
+        activity = self.env['mail.activity'].sudo().browse(int(activity_id))
+        if not activity.exists():
+            raise UserError('Approval activity not found.')
+        if not self._is_platform_admin() and activity.user_id != self.env.user:
+            # Vendor admins may act on activities assigned to them in their companies.
+            if not self.env.user.has_group('flexerp_vendor_rbac.group_vendor_admin'):
+                raise AccessError('Not allowed to act on this approval.')
+        action = (action or 'approve').lower()
+        res_model = activity.res_model
+        res_id = activity.res_id
+        record = self.env[res_model].sudo().browse(res_id) if res_model and res_id else False
+
+        if action == 'approve':
+            if record and record.exists():
+                if res_model == 'sale.order' and record.state in ('draft', 'sent'):
+                    record.action_confirm()
+                elif res_model == 'purchase.order' and hasattr(record, 'button_confirm') and record.state in ('draft', 'sent'):
+                    record.button_confirm()
+                elif res_model in ('hr.leave', 'hr.holidays') and hasattr(record, 'action_approve'):
+                    record.action_approve()
+                elif res_model == 'account.move' and record.state == 'draft' and hasattr(record, 'action_post'):
+                    record.action_post()
+            activity.action_done()
+            return {'ok': True, 'action': 'approve', 'activity_id': activity_id, 'res_model': res_model, 'res_id': res_id}
+
+        if action in ('reject', 'cancel'):
+            if record and record.exists():
+                if res_model == 'sale.order' and record.state in ('draft', 'sent') and hasattr(record, 'action_cancel'):
+                    record.action_cancel()
+                elif res_model == 'purchase.order' and record.state in ('draft', 'sent', 'to approve') and hasattr(record, 'button_cancel'):
+                    record.button_cancel()
+                elif res_model in ('hr.leave', 'hr.holidays') and hasattr(record, 'action_refuse'):
+                    record.action_refuse()
+            activity.unlink()
+            return {'ok': True, 'action': 'reject', 'activity_id': activity_id, 'res_model': res_model, 'res_id': res_id}
+
+        raise UserError('Unknown approval action.')
 
     # ------------------------------------------------------------------
     # POS
@@ -614,11 +658,13 @@ class FlexerpMobileApi(models.AbstractModel):
             'id': move.id,
             'name': move.name,
             'partner_name': move.partner_id.display_name,
+            'partner_vat': move.partner_id.vat or '',
             'partner_phone': move.partner_id.phone or move.partner_id.mobile or '',
             'amount_total': move.amount_total,
             'amount_residual': move.amount_residual,
             'amount_untaxed': move.amount_untaxed,
             'amount_tax': move.amount_tax,
+            'currency_name': move.currency_id.name if move.currency_id else 'LKR',
             'state': move.state,
             'payment_state': move.payment_state,
             'invoice_date': fields.Date.to_string(move.invoice_date) if move.invoice_date else None,
@@ -695,9 +741,10 @@ class FlexerpMobileApi(models.AbstractModel):
             api._require_feature('invoicing')
             move = api.env['account.move'].browse(int(move_id))
             api._assert_record_company(move)
+            currency_name = move.currency_id.name if move.currency_id else 'LKR'
             message = (
                 f'Invoice {move.name}\n'
-                f'Amount: {move.amount_total:.2f} LKR\n'
+                f'Amount: {move.amount_total:.2f} {currency_name}\n'
                 f'Status: {move.payment_state}\n'
                 f'From: {move.company_id.name}'
             )
@@ -706,9 +753,14 @@ class FlexerpMobileApi(models.AbstractModel):
             api._require_feature('pos')
             order = api.env['pos.order'].browse(int(pos_order_id))
             api._assert_record_company(order)
+            currency_name = (
+                order.currency_id.name
+                if hasattr(order, 'currency_id') and order.currency_id
+                else (order.company_id.currency_id.name if order.company_id.currency_id else 'LKR')
+            )
             message = (
                 f'Receipt {order.name or order.pos_reference}\n'
-                f'Amount: {order.amount_total:.2f} LKR\n'
+                f'Amount: {order.amount_total:.2f} {currency_name}\n'
                 f'From: {order.company_id.name}'
             )
         else:
@@ -1077,6 +1129,9 @@ class FlexerpMobileApi(models.AbstractModel):
             'id': m.id,
             'name': m.name,
             'partner_name': m.partner_id.display_name,
+            'partner_vat': m.partner_id.vat or '',
+            'amount_untaxed': m.amount_untaxed,
+            'amount_tax': m.amount_tax,
             'amount_total': m.amount_total,
             'amount_residual': m.amount_residual,
             'state': m.state,

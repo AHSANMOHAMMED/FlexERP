@@ -189,21 +189,19 @@ class PosSessionNotifier extends Notifier<PosShiftSession> {
     final user = ref.read(currentUserProvider);
     final api = ref.read(flexerpApiProvider);
     if (user != null && !user.isDemo && api != null && state.id > 0) {
-      try {
-        final closed = await api.posCloseSession(state.id);
-        state = PosShiftSession(
-          id: state.id,
-          name: state.name,
-          cashierName: state.cashierName,
-          openingTime: state.openingTime,
-          openingBalance: state.openingBalance,
-          cashSalesTotal: state.cashSalesTotal,
-          cardSalesTotal: state.cardSalesTotal,
-          transactionCount: state.transactionCount,
-          state: closed['state']?.toString() ?? 'closed',
-        );
-        return;
-      } catch (_) {}
+      final closed = await api.posCloseSession(state.id);
+      state = PosShiftSession(
+        id: state.id,
+        name: state.name,
+        cashierName: state.cashierName,
+        openingTime: state.openingTime,
+        openingBalance: state.openingBalance,
+        cashSalesTotal: state.cashSalesTotal,
+        cardSalesTotal: state.cardSalesTotal,
+        transactionCount: state.transactionCount,
+        state: closed['state']?.toString() ?? 'closed',
+      );
+      return;
     }
     state = PosShiftSession(
       id: state.id,

@@ -21,13 +21,15 @@ class InvoicesNotifier extends Notifier<List<AccountInvoice>> {
       state = records.map((rec) {
         final total = (rec['amount_total'] as num?)?.toDouble() ?? 0.0;
         final residual = (rec['amount_residual'] as num?)?.toDouble() ?? total;
+        final untaxed = (rec['amount_untaxed'] as num?)?.toDouble() ?? total;
+        final tax = (rec['amount_tax'] as num?)?.toDouble() ?? 0.0;
         return AccountInvoice(
           id: rec['id'] as int? ?? 0,
           number: rec['name']?.toString() ?? 'INV/2026/000',
           partnerName: rec['partner_name']?.toString() ?? 'Client',
-          partnerVat: '102938475-7000',
-          amountUntaxed: total * 0.8,
-          amountTax: total * 0.2,
+          partnerVat: rec['partner_vat']?.toString() ?? '',
+          amountUntaxed: untaxed,
+          amountTax: tax,
           amountTotal: total,
           amountResidual: residual,
           state: rec['state']?.toString() ?? 'posted',
@@ -41,10 +43,17 @@ class InvoicesNotifier extends Notifier<List<AccountInvoice>> {
               : DateTime.now().add(const Duration(days: 30)),
         );
       }).toList();
-    } catch (_) {}
+    } catch (e) {
+      rethrow;
+    }
   }
 
-  Future<void> registerPayment(int invoiceId, double paymentAmount, {String? memo}) async {
+  Future<void> registerPayment(
+    int invoiceId,
+    double paymentAmount, {
+    String? memo,
+    int? journalId,
+  }) async {
     final user = ref.read(currentUserProvider);
     final api = ref.read(flexerpApiProvider);
     if (user != null && !user.isDemo && api != null) {
@@ -52,6 +61,7 @@ class InvoicesNotifier extends Notifier<List<AccountInvoice>> {
         final result = await api.registerPayment(
           moveId: invoiceId,
           amount: paymentAmount,
+          journalId: journalId,
           memo: memo,
         );
         final residual = (result['amount_residual'] as num?)?.toDouble();
@@ -78,11 +88,17 @@ class InvoicesNotifier extends Notifier<List<AccountInvoice>> {
               inv
         ];
         return;
-      } catch (_) {
+      } catch (e) {
         await ref.read(offlineQueueProvider.notifier).enqueue(
               type: 'payment_register',
-              payload: {'move_id': invoiceId, 'amount': paymentAmount, 'memo': memo},
+              payload: {
+                'move_id': invoiceId,
+                'amount': paymentAmount,
+                'memo': memo,
+                if (journalId != null) 'journal_id': journalId,
+              },
             );
+        rethrow;
       }
     }
 

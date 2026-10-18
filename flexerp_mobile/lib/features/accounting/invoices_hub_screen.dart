@@ -1,4 +1,9 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/flex_colors.dart';
 import '../../core/theme/flex_typography.dart';
@@ -28,7 +33,16 @@ class _InvoicesHubScreenState extends ConsumerState<InvoicesHubScreen> {
   @override
   void initState() {
     super.initState();
-    Future.microtask(() => ref.read(invoicesProvider.notifier).syncFromOdoo());
+    Future.microtask(() async {
+      try {
+        await ref.read(invoicesProvider.notifier).syncFromOdoo();
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Invoice sync failed: $e'), backgroundColor: FlexColors.danger),
+        );
+      }
+    });
   }
 
   @override
@@ -60,15 +74,18 @@ class _InvoicesHubScreenState extends ConsumerState<InvoicesHubScreen> {
         subtitle: 'Financial Receivables',
         currentBranch: currentBranch,
         onSync: () async {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Syncing Customer Invoices with Odoo...')),
-          );
-          await ref.read(invoicesProvider.notifier).syncFromOdoo();
+          try {
+            await ref.read(invoicesProvider.notifier).syncFromOdoo();
+          } catch (e) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Sync failed: $e'), backgroundColor: FlexColors.danger),
+            );
+          }
         },
       ),
       body: Column(
         children: [
-          // Search Bar
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: TextField(
@@ -79,8 +96,6 @@ class _InvoicesHubScreenState extends ConsumerState<InvoicesHubScreen> {
               ),
             ),
           ),
-
-          // Segmented Tabs
           SizedBox(
             height: 44,
             child: ListView.builder(
@@ -113,8 +128,6 @@ class _InvoicesHubScreenState extends ConsumerState<InvoicesHubScreen> {
             ),
           ),
           const SizedBox(height: 8),
-
-          // Invoices List
           Expanded(
             child: filteredInvoices.isEmpty
                 ? Center(
@@ -138,13 +151,149 @@ class _InvoicesHubScreenState extends ConsumerState<InvoicesHubScreen> {
   }
 }
 
-class _InvoiceCard extends StatelessWidget {
+class _InvoiceCard extends ConsumerWidget {
   final AccountInvoice invoice;
 
   const _InvoiceCard({required this.invoice});
 
+  Future<void> _downloadPdf(BuildContext context, WidgetRef ref) async {
+    final api = ref.read(flexerpApiProvider);
+    final user = ref.read(currentUserProvider);
+    if (user == null || user.isDemo || api == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Demo: PDF for ${invoice.number} not fetched from Odoo')),
+      );
+      return;
+    }
+    try {
+      final pdf = await api.invoicePdf(invoice.id);
+      final b64 = pdf['pdf_base64']?.toString();
+      if (b64 == null || b64.isEmpty) throw Exception('Empty PDF');
+      final bytes = base64Decode(b64);
+      if (kIsWeb) {
+        await Clipboard.setData(ClipboardData(text: 'PDF ${pdf['filename']} (${bytes.length} bytes)'));
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('PDF fetched (web — metadata copied)')),
+        );
+        return;
+      }
+      final file = File('${Directory.systemTemp.path}/${pdf['filename'] ?? 'invoice.pdf'}');
+      await file.writeAsBytes(bytes);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('PDF saved: ${file.path}'), backgroundColor: FlexColors.success),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('PDF error: $e'), backgroundColor: FlexColors.danger),
+      );
+    }
+  }
+
+  Future<void> _sendWhatsApp(BuildContext context, WidgetRef ref) async {
+    final api = ref.read(flexerpApiProvider);
+    final user = ref.read(currentUserProvider);
+    if (user == null || user.isDemo || api == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Demo reminder for ${invoice.number}')),
+      );
+      return;
+    }
+    final phoneCtrl = TextEditingController();
+    final phone = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: FlexColors.surfaceDark,
+        title: const Text('WhatsApp invoice'),
+        content: TextField(
+          controller: phoneCtrl,
+          keyboardType: TextInputType.phone,
+          decoration: const InputDecoration(labelText: 'Customer phone (+94…)'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, phoneCtrl.text.trim()),
+            child: const Text('Send'),
+          ),
+        ],
+      ),
+    );
+    if (phone == null || phone.isEmpty) return;
+    try {
+      final result = await api.whatsappSendInvoice(phone: phone, moveId: invoice.id);
+      if (!context.mounted) return;
+      final status = result['status']?.toString() ?? 'unknown';
+      final waMe = result['wa_me_url']?.toString();
+      if (status == 'not_configured' && waMe != null) {
+        await Clipboard.setData(ClipboardData(text: waMe));
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('WhatsApp API not configured — wa.me link copied'),
+            backgroundColor: FlexColors.warning,
+          ),
+        );
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(status == 'sent' ? 'WhatsApp sent' : 'WhatsApp: $status'),
+          backgroundColor: status == 'sent' ? FlexColors.success : FlexColors.warning,
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('WhatsApp failed: $e'), backgroundColor: FlexColors.danger),
+      );
+    }
+  }
+
+  Future<void> _openDetail(BuildContext context, WidgetRef ref) async {
+    final api = ref.read(flexerpApiProvider);
+    final user = ref.read(currentUserProvider);
+    if (user == null || user.isDemo || api == null) return;
+    try {
+      final detail = await api.invoiceDetail(invoice.id);
+      if (!context.mounted) return;
+      await showModalBottomSheet(
+        context: context,
+        backgroundColor: FlexColors.surfaceDark,
+        builder: (ctx) => Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(detail['name']?.toString() ?? invoice.number, style: FlexTypography.headlineMd),
+              const SizedBox(height: 8),
+              Text('Partner: ${detail['partner_name'] ?? invoice.partnerName}', style: FlexTypography.bodyMd),
+              Text('State: ${detail['state'] ?? invoice.state}', style: FlexTypography.bodySm),
+              Text(
+                'Total: ${LkFormatters.formatLkr((detail['amount_total'] as num?)?.toDouble() ?? invoice.amountTotal)}',
+                style: FlexTypography.labelLg,
+              ),
+              Text(
+                'Residual: ${LkFormatters.formatLkr((detail['amount_residual'] as num?)?.toDouble() ?? invoice.amountResidual)}',
+                style: FlexTypography.bodySm,
+              ),
+            ],
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Detail failed: $e'), backgroundColor: FlexColors.danger),
+      );
+    }
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     FlexBadgeVariant badgeVariant = FlexBadgeVariant.neutral;
     String badgeText = invoice.paymentState.toUpperCase();
 
@@ -160,6 +309,7 @@ class _InvoiceCard extends StatelessWidget {
     }
 
     return FlexCard(
+      onTap: () => _openDetail(context, ref),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -176,7 +326,6 @@ class _InvoiceCard extends StatelessWidget {
             style: FlexTypography.bodySm,
           ),
           const SizedBox(height: 12),
-
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -218,7 +367,6 @@ class _InvoiceCard extends StatelessWidget {
           const SizedBox(height: 12),
           const Divider(),
           const SizedBox(height: 8),
-
           Row(
             children: [
               if (!invoice.isPaid) ...[
@@ -237,19 +385,11 @@ class _InvoiceCard extends StatelessWidget {
               ],
               IconButton(
                 icon: const Icon(Icons.picture_as_pdf, color: FlexColors.primaryLight, size: 20),
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Downloading Tax PDF for ${invoice.number}...')),
-                  );
-                },
+                onPressed: () => _downloadPdf(context, ref),
               ),
               IconButton(
                 icon: const Icon(Icons.send_outlined, color: FlexColors.info, size: 20),
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Payment reminder dispatched for ${invoice.number}')),
-                  );
-                },
+                onPressed: () => _sendWhatsApp(context, ref),
               ),
             ],
           ),

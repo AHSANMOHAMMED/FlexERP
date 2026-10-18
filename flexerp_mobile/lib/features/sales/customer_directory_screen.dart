@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/localization/lk_formatters.dart';
 import '../../core/theme/flex_colors.dart';
 import '../../core/widgets/flex_app_bar.dart';
 import '../../data/repositories/partner_repository.dart';
@@ -260,7 +261,7 @@ class _CustomerDirectoryScreenState extends ConsumerState<CustomerDirectoryScree
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                    'Receivable: Rs. ${p.totalReceivable.toStringAsFixed(0)}',
+                                    'Receivable: ${LkFormatters.formatLkr(p.totalReceivable)}',
                                     style: TextStyle(
                                       color: p.isOverCreditLimit ? FlexColors.error : FlexColors.textSecondary,
                                       fontSize: 12,
@@ -268,7 +269,7 @@ class _CustomerDirectoryScreenState extends ConsumerState<CustomerDirectoryScree
                                     ),
                                   ),
                                   Text(
-                                    'Limit: Rs. ${p.creditLimit.toStringAsFixed(0)}',
+                                    'Limit: ${LkFormatters.formatLkr(p.creditLimit)}',
                                     style: const TextStyle(color: FlexColors.textSecondary, fontSize: 12),
                                   ),
                                 ],
@@ -300,11 +301,16 @@ class _CustomerDirectoryScreenState extends ConsumerState<CustomerDirectoryScree
                                       ),
                                       onPressed: () {
                                         ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(content: Text('Dialing ${p.phone}...')),
+                                          SnackBar(
+                                            content: Text('Dialing ${LkFormatters.formatLkPhone(p.phone)}...'),
+                                          ),
                                         );
                                       },
                                       icon: const Icon(Icons.phone, size: 16, color: FlexColors.primaryLight),
-                                      label: Text(p.phone, style: const TextStyle(fontSize: 11)),
+                                      label: Text(
+                                        LkFormatters.formatLkPhone(p.phone),
+                                        style: const TextStyle(fontSize: 11),
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 8),

@@ -46,8 +46,9 @@ class ExecutiveKpisNotifier extends Notifier<ExecutiveKpis> {
         pendingShipments: (data['pending_shipments'] as num?)?.toInt() ?? 0,
         vendorId: data['vendor_id']?.toString() ?? user.vendorId,
       );
-    } catch (_) {
+    } catch (e) {
       // Keep last good / zero state — never reinject demo numbers in live mode.
+      rethrow;
     }
   }
 }

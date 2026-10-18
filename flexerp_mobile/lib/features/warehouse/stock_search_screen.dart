@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/flex_colors.dart';
-import '../../core/widgets/flex_app_bar.dart';
+import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/stock_quant_repository.dart';
+import '../../core/widgets/flex_app_bar.dart';
 
 class StockSearchScreen extends ConsumerStatefulWidget {
   const StockSearchScreen({super.key});
@@ -13,12 +14,53 @@ class StockSearchScreen extends ConsumerStatefulWidget {
 
 class _StockSearchScreenState extends ConsumerState<StockSearchScreen> {
   final TextEditingController _searchController = TextEditingController();
-  String _selectedWarehouse = 'All';
+  String _selectedLocation = 'All';
+  List<Map<String, dynamic>> _locations = [];
 
   @override
   void initState() {
     super.initState();
-    Future.microtask(() => ref.read(stockQuantsProvider.notifier).syncFromOdoo());
+    Future.microtask(() async {
+      try {
+        await ref.read(stockQuantsProvider.notifier).syncFromOdoo();
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Stock sync failed: $e'), backgroundColor: FlexColors.danger),
+        );
+      }
+      await _loadLocations();
+    });
+  }
+
+  Future<void> _loadLocations() async {
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user == null || user.isDemo || api == null) {
+      setState(() {
+        _locations = [
+          {'id': 0, 'name': 'All'},
+          {'id': 0, 'name': 'WH1'},
+          {'id': 0, 'name': 'WH2'},
+        ];
+      });
+      return;
+    }
+    try {
+      final rows = await api.stockLocations();
+      if (!mounted) return;
+      setState(() {
+        _locations = [
+          {'id': 0, 'name': 'All'},
+          ...rows,
+        ];
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Locations failed: $e'), backgroundColor: FlexColors.danger),
+      );
+    }
   }
 
   @override
@@ -36,9 +78,17 @@ class _StockSearchScreenState extends ConsumerState<StockSearchScreen> {
       final matchesSearch = q.productName.toLowerCase().contains(query) ||
           q.productSku.toLowerCase().contains(query) ||
           q.locationName.toLowerCase().contains(query);
-      final matchesWh = _selectedWarehouse == 'All' || q.warehouseCode.contains(_selectedWarehouse);
-      return matchesSearch && matchesWh;
+      final matchesLoc = _selectedLocation == 'All' ||
+          q.locationName.toLowerCase().contains(_selectedLocation.toLowerCase()) ||
+          q.warehouseCode.contains(_selectedLocation);
+      return matchesSearch && matchesLoc;
     }).toList();
+
+    final chips = _locations.isEmpty
+        ? [
+            {'name': 'All'},
+          ]
+        : _locations;
 
     return Scaffold(
       backgroundColor: FlexColors.background,
@@ -46,15 +96,27 @@ class _StockSearchScreenState extends ConsumerState<StockSearchScreen> {
         title: 'Inventory & Bins',
         subtitle: 'stock.quant Multi-Warehouse Levels',
         showCompanySwitcher: false,
-        onSync: () => ref.read(stockQuantsProvider.notifier).syncFromOdoo(),
+        onSync: () async {
+          try {
+            await ref.read(stockQuantsProvider.notifier).syncFromOdoo();
+            await _loadLocations();
+          } catch (e) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Sync failed: $e'), backgroundColor: FlexColors.danger),
+            );
+          }
+        },
       ),
       body: RefreshIndicator(
         color: FlexColors.primary,
         backgroundColor: FlexColors.surface,
-        onRefresh: () => ref.read(stockQuantsProvider.notifier).syncFromOdoo(),
+        onRefresh: () async {
+          await ref.read(stockQuantsProvider.notifier).syncFromOdoo();
+          await _loadLocations();
+        },
         child: Column(
           children: [
-            // Search & filter
             Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
@@ -97,21 +159,18 @@ class _StockSearchScreenState extends ConsumerState<StockSearchScreen> {
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: Row(
-                      children: [
-                        {'label': 'All Hubs', 'code': 'All'},
-                        {'label': 'Kelaniya (WH1)', 'code': 'WH1'},
-                        {'label': 'Colombo (WH2)', 'code': 'WH2'},
-                        {'label': 'Kandy (WH3)', 'code': 'WH3'},
-                        {'label': 'Galle (WH4)', 'code': 'WH4'},
-                      ].map((wh) {
-                        final isSelected = _selectedWarehouse == wh['code'];
+                      children: chips.map((loc) {
+                        final name = loc['name']?.toString() ?? 'All';
+                        final code = name == 'All' ? 'All' : name;
+                        final isSelected = _selectedLocation == code ||
+                            (_selectedLocation != 'All' && name.contains(_selectedLocation));
                         return Padding(
                           padding: const EdgeInsets.only(right: 8.0),
                           child: ChoiceChip(
-                            label: Text(wh['label']!),
+                            label: Text(name.length > 28 ? '${name.substring(0, 28)}…' : name),
                             selected: isSelected,
                             onSelected: (selected) {
-                              if (selected) setState(() => _selectedWarehouse = wh['code']!);
+                              if (selected) setState(() => _selectedLocation = code);
                             },
                             selectedColor: FlexColors.primary.withValues(alpha: 0.25),
                             backgroundColor: FlexColors.surface,
@@ -131,156 +190,53 @@ class _StockSearchScreenState extends ConsumerState<StockSearchScreen> {
                 ],
               ),
             ),
-
-            // Quants List
             Expanded(
               child: filteredQuants.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                          Icon(Icons.inventory_2_outlined, color: FlexColors.textSecondary, size: 48),
-                          SizedBox(height: 12),
-                          Text('No stock records found', style: TextStyle(color: FlexColors.textSecondary)),
-                        ],
-                      ),
+                  ? const Center(
+                      child: Text('No stock quants match filters', style: TextStyle(color: FlexColors.textSecondary)),
                     )
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                  : ListView.separated(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       itemCount: filteredQuants.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
                       itemBuilder: (context, index) {
                         final q = filteredQuants[index];
-
                         return Container(
-                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(14),
                           decoration: BoxDecoration(
                             color: FlexColors.surface,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: q.isLowStock
-                                  ? FlexColors.warning.withValues(alpha: 0.5)
-                                  : FlexColors.cardBorder,
-                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: FlexColors.cardBorder),
                           ),
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                          child: Row(
                             children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.all(10),
-                                    decoration: BoxDecoration(
-                                      color: FlexColors.primary.withValues(alpha: 0.12),
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: const Icon(Icons.qr_code_2, color: FlexColors.primaryLight, size: 24),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          q.productName,
-                                          style: const TextStyle(
-                                            color: FlexColors.textPrimary,
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Row(
-                                          children: [
-                                            Text(
-                                              q.productSku,
-                                              style: const TextStyle(
-                                                color: FlexColors.primaryLight,
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 11,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Text(
-                                              '• ${q.category}',
-                                              style: const TextStyle(color: FlexColors.textSecondary, fontSize: 11),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  if (q.isLowStock)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                      decoration: BoxDecoration(
-                                        color: FlexColors.warning.withValues(alpha: 0.15),
-                                        borderRadius: BorderRadius.circular(6),
-                                        border: Border.all(color: FlexColors.warning),
-                                      ),
-                                      child: const Text(
-                                        'LOW STOCK',
-                                        style: TextStyle(
-                                          color: FlexColors.warning,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              // Location tag
-                              Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: FlexColors.background,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Row(
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Icon(Icons.warehouse_outlined, size: 14, color: FlexColors.textSecondary),
-                                    const SizedBox(width: 6),
-                                    Expanded(
-                                      child: Text(
-                                        q.locationName,
-                                        style: const TextStyle(color: FlexColors.textSecondary, fontSize: 12),
-                                        overflow: TextOverflow.ellipsis,
+                                    Text(
+                                      q.productName,
+                                      style: const TextStyle(
+                                        color: FlexColors.textPrimary,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 14,
                                       ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '${q.productSku} · ${q.locationName}',
+                                      style: const TextStyle(color: FlexColors.textSecondary, fontSize: 11),
                                     ),
                                   ],
                                 ),
                               ),
-                              const SizedBox(height: 12),
-                              // Quantities row
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: _buildQtyCard(
-                                      label: 'On Hand',
-                                      value: '${q.quantityOnHand.toStringAsFixed(0)} ${q.uom}',
-                                      color: FlexColors.textPrimary,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: _buildQtyCard(
-                                      label: 'Reserved',
-                                      value: '${q.reservedQuantity.toStringAsFixed(0)} ${q.uom}',
-                                      color: FlexColors.warning,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: _buildQtyCard(
-                                      label: 'Available',
-                                      value: '${q.availableQuantity.toStringAsFixed(0)} ${q.uom}',
-                                      color: FlexColors.success,
-                                    ),
-                                  ),
-                                ],
+                              Text(
+                                q.quantityOnHand.toStringAsFixed(1),
+                                style: TextStyle(
+                                  color: q.isLowStock ? FlexColors.warning : FlexColors.primaryLight,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
                               ),
                             ],
                           ),
@@ -290,27 +246,6 @@ class _StockSearchScreenState extends ConsumerState<StockSearchScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildQtyCard({required String label, required String value, required Color color}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
-      decoration: BoxDecoration(
-        color: FlexColors.background,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: const TextStyle(color: FlexColors.textSecondary, fontSize: 10)),
-          const SizedBox(height: 2),
-          Text(
-            value,
-            style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold),
-          ),
-        ],
       ),
     );
   }

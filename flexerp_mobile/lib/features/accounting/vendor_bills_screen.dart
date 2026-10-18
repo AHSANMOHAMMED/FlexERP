@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/localization/lk_formatters.dart';
 import '../../core/theme/flex_colors.dart';
 import '../../core/widgets/flex_app_bar.dart';
 import '../../data/repositories/vendor_bill_repository.dart';
@@ -78,7 +79,7 @@ class _VendorBillsScreenState extends ConsumerState<VendorBillsScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Rs. ${totalPayable.toStringAsFixed(0)}',
+                        LkFormatters.formatLkr(totalPayable),
                         style: const TextStyle(
                           color: FlexColors.textPrimary,
                           fontSize: 22,
@@ -231,10 +232,10 @@ class _VendorBillsScreenState extends ConsumerState<VendorBillsScreen> {
                                     Row(
                                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                       children: [
-                                        Text('18% VAT: Rs. ${bill.vatAmount.toStringAsFixed(0)}',
+                                        Text('18% VAT: ${LkFormatters.formatLkr(bill.vatAmount)}',
                                             style: const TextStyle(color: FlexColors.textSecondary, fontSize: 11)),
                                         if (bill.whtAmount > 0)
-                                          Text('5% WHT Ded: Rs. ${bill.whtAmount.toStringAsFixed(0)}',
+                                          Text('5% WHT Ded: ${LkFormatters.formatLkr(bill.whtAmount)}',
                                               style: const TextStyle(color: FlexColors.warning, fontSize: 11)),
                                       ],
                                     ),
@@ -244,7 +245,7 @@ class _VendorBillsScreenState extends ConsumerState<VendorBillsScreen> {
                                       children: [
                                         const Text('Total Bill Amount:',
                                             style: TextStyle(color: FlexColors.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
-                                        Text('Rs. ${bill.totalAmount.toStringAsFixed(0)}',
+                                        Text(LkFormatters.formatLkr(bill.totalAmount),
                                             style: const TextStyle(color: FlexColors.textPrimary, fontSize: 13, fontWeight: FontWeight.bold)),
                                       ],
                                     ),

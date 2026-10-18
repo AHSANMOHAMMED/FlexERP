@@ -11,6 +11,7 @@ import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/admin_repository.dart';
 import '../../data/repositories/sales_repository.dart';
 import '../../data/repositories/executive_repository.dart';
+import '../sales/sale_order_detail_sheet.dart';
 
 class ExecutiveHubScreen extends ConsumerStatefulWidget {
   final VoidCallback? onNavigateToBarcode;
@@ -199,8 +200,18 @@ class _ExecutiveHubScreenState extends ConsumerState<ExecutiveHubScreen> {
                                 label: 'One-Tap Approve',
                                 icon: Icons.check,
                                 height: 36,
-                                onPressed: () {
-                                  ref.read(pendingApprovalsProvider.notifier).approve(item.id);
+                                onPressed: () async {
+                                  try {
+                                    await ref.read(pendingApprovalsProvider.notifier).approve(item.id);
+                                  } catch (e) {
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Approve failed: $e'),
+                                        backgroundColor: FlexColors.danger,
+                                      ),
+                                    );
+                                  }
                                 },
                               ),
                             ),
@@ -211,8 +222,18 @@ class _ExecutiveHubScreenState extends ConsumerState<ExecutiveHubScreen> {
                                 icon: Icons.close,
                                 variant: FlexButtonVariant.danger,
                                 height: 36,
-                                onPressed: () {
-                                  ref.read(pendingApprovalsProvider.notifier).reject(item.id);
+                                onPressed: () async {
+                                  try {
+                                    await ref.read(pendingApprovalsProvider.notifier).reject(item.id);
+                                  } catch (e) {
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Reject failed: $e'),
+                                        backgroundColor: FlexColors.danger,
+                                      ),
+                                    );
+                                  }
                                 },
                               ),
                             ),
@@ -228,11 +249,12 @@ class _ExecutiveHubScreenState extends ConsumerState<ExecutiveHubScreen> {
             // Section 4: Recent Confirmed Orders
             Text('Recent Active Orders', style: FlexTypography.headlineMd),
             const SizedBox(height: 12),
-            ...salesOrders.take(3).map((order) {
+            ...salesOrders.take(5).map((order) {
               return Container(
                 margin: const EdgeInsets.only(bottom: 8),
                 child: FlexCard(
                   padding: const EdgeInsets.all(12),
+                  onTap: () => showSaleOrderDetail(context, ref, order),
                   child: Row(
                     children: [
                       const Icon(Icons.description_outlined, color: FlexColors.primaryLight, size: 24),

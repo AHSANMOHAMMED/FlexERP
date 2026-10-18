@@ -336,20 +336,34 @@ class _VendorInventoryManagementScreenState
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(backgroundColor: FlexColors.primary),
-                  onPressed: () {
-                    ref.read(vendorInventoryProvider.notifier).adjustStock(
-                          product.id,
-                          delta,
-                          reason: reason,
-                        );
-                    Navigator.pop(ctx);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Live Stock Sync: ${product.name} is now $newStock units!'),
-                        backgroundColor: FlexColors.surfaceRaisedDark,
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
+                  onPressed: () async {
+                    try {
+                      await ref.read(vendorInventoryProvider.notifier).adjustStock(
+                            product.id,
+                            delta,
+                            reason: reason,
+                          );
+                      if (!context.mounted) return;
+                      Navigator.pop(ctx);
+                      final list = ref.read(vendorInventoryProvider);
+                      final synced = list.where((p) => p.id == product.id).firstOrNull;
+                      final qty = synced?.stockOnHand ?? newStock;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Stock synced: ${product.name} is now $qty units'),
+                          backgroundColor: FlexColors.success,
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    } catch (e) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Stock adjust failed: $e'),
+                          backgroundColor: FlexColors.danger,
+                        ),
+                      );
+                    }
                   },
                   child: const Text('Broadcast Live Stock'),
                 ),

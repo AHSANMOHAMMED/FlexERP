@@ -6,6 +6,7 @@ import '../../core/widgets/flex_button.dart';
 import '../../core/localization/lk_formatters.dart';
 import '../../data/models/account_invoice.dart';
 import '../../data/repositories/accounting_repository.dart';
+import '../../data/repositories/auth_repository.dart';
 
 class PaymentRegisterSheet extends ConsumerStatefulWidget {
   final AccountInvoice invoice;
@@ -31,14 +32,17 @@ class PaymentRegisterSheet extends ConsumerStatefulWidget {
 class _PaymentRegisterSheetState extends ConsumerState<PaymentRegisterSheet> {
   late TextEditingController _amountController;
   final TextEditingController _memoController = TextEditingController();
-  String _selectedJournal = 'Commercial Bank of Ceylon PLC';
-  bool _sendReceiptEmail = true;
+  List<Map<String, dynamic>> _journals = [];
+  int? _selectedJournalId;
+  String _selectedJournalLabel = '';
+  bool _loadingJournals = false;
+  bool _submitting = false;
 
-  final List<String> _lkJournals = [
-    'Commercial Bank of Ceylon PLC',
-    'Sampath Bank Corporate Account',
-    'Hatton National Bank (HNB)',
-    'Petty Cash Colombo Drawer',
+  final List<Map<String, dynamic>> _demoJournals = const [
+    {'id': 0, 'name': 'Commercial Bank of Ceylon PLC'},
+    {'id': 0, 'name': 'Sampath Bank Corporate Account'},
+    {'id': 0, 'name': 'Hatton National Bank (HNB)'},
+    {'id': 0, 'name': 'Petty Cash Colombo Drawer'},
   ];
 
   @override
@@ -46,24 +50,83 @@ class _PaymentRegisterSheetState extends ConsumerState<PaymentRegisterSheet> {
     super.initState();
     _amountController = TextEditingController(text: widget.invoice.amountResidual.toStringAsFixed(2));
     _memoController.text = 'Payment for ${widget.invoice.number}';
+    Future.microtask(_loadJournals);
+  }
+
+  Future<void> _loadJournals() async {
+    final user = ref.read(currentUserProvider);
+    final api = ref.read(flexerpApiProvider);
+    if (user == null || user.isDemo || api == null) {
+      setState(() {
+        _journals = List.from(_demoJournals);
+        _selectedJournalLabel = _journals.first['name']?.toString() ?? '';
+      });
+      return;
+    }
+    setState(() => _loadingJournals = true);
+    try {
+      final rows = await api.accountingJournals();
+      if (!mounted) return;
+      setState(() {
+        _journals = rows;
+        if (_journals.isNotEmpty) {
+          _selectedJournalId = (_journals.first['id'] as num?)?.toInt();
+          _selectedJournalLabel = _journals.first['name']?.toString() ?? '';
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Journals failed: $e'), backgroundColor: FlexColors.danger),
+      );
+      setState(() {
+        _journals = [];
+        _selectedJournalId = null;
+        _selectedJournalLabel = '';
+      });
+    } finally {
+      if (mounted) setState(() => _loadingJournals = false);
+    }
   }
 
   Future<void> _confirmPayment() async {
     final amount = double.tryParse(_amountController.text) ?? widget.invoice.amountResidual;
-    await ref.read(invoicesProvider.notifier).registerPayment(
-          widget.invoice.id,
-          amount,
-          memo: _memoController.text.trim(),
-        );
+    setState(() => _submitting = true);
+    try {
+      await ref.read(invoicesProvider.notifier).registerPayment(
+            widget.invoice.id,
+            amount,
+            memo: _memoController.text.trim(),
+            journalId: (_selectedJournalId != null && _selectedJournalId! > 0)
+                ? _selectedJournalId
+                : null,
+          );
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: FlexColors.success,
+          content: Text(
+            'Registered ${LkFormatters.formatLkr(amount)}'
+            '${_selectedJournalLabel.isNotEmpty ? ' via $_selectedJournalLabel' : ''}',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Payment failed (queued if offline): $e'), backgroundColor: FlexColors.warning),
+      );
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
 
-    if (!mounted) return;
-    Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: FlexColors.success,
-        content: Text('Registered payment of ${LkFormatters.formatLkr(amount)} to $_selectedJournal'),
-      ),
-    );
+  @override
+  void dispose() {
+    _amountController.dispose();
+    _memoController.dispose();
+    super.dispose();
   }
 
   @override
@@ -101,13 +164,8 @@ class _PaymentRegisterSheetState extends ConsumerState<PaymentRegisterSheet> {
             ],
           ),
           const SizedBox(height: 4),
-          Text(
-            'Client: ${widget.invoice.partnerName}',
-            style: FlexTypography.bodySm,
-          ),
+          Text('Client: ${widget.invoice.partnerName}', style: FlexTypography.bodySm),
           const SizedBox(height: 16),
-
-          // Balance Due Stat Block
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -131,8 +189,6 @@ class _PaymentRegisterSheetState extends ConsumerState<PaymentRegisterSheet> {
             ),
           ),
           const SizedBox(height: 16),
-
-          // Payment Amount
           Text('PAYMENT AMOUNT (LKR)', style: FlexTypography.labelSm),
           const SizedBox(height: 8),
           TextField(
@@ -144,24 +200,37 @@ class _PaymentRegisterSheetState extends ConsumerState<PaymentRegisterSheet> {
             ),
           ),
           const SizedBox(height: 14),
-
-          // Payment Journal Selector
-          Text('PAYMENT JOURNAL / BANK ACCOUNT (SRI LANKA)', style: FlexTypography.labelSm),
+          Text('PAYMENT JOURNAL / BANK ACCOUNT', style: FlexTypography.labelSm),
           const SizedBox(height: 8),
-          DropdownButtonFormField<String>(
-            value: _selectedJournal,
-            dropdownColor: FlexColors.surfaceRaisedDark,
-            decoration: const InputDecoration(),
-            items: _lkJournals.map((j) {
-              return DropdownMenuItem(value: j, child: Text(j, style: FlexTypography.bodyMd));
-            }).toList(),
-            onChanged: (val) {
-              if (val != null) setState(() => _selectedJournal = val);
-            },
-          ),
+          if (_loadingJournals)
+            const LinearProgressIndicator()
+          else if (_journals.isEmpty)
+            Text(
+              'No payment journals available. Fix the journal sync error before registering payment.',
+              style: FlexTypography.bodySm.copyWith(color: FlexColors.danger),
+            )
+          else
+            DropdownButtonFormField<String>(
+              value: _selectedJournalLabel.isEmpty ? null : _selectedJournalLabel,
+              dropdownColor: FlexColors.surfaceRaisedDark,
+              decoration: const InputDecoration(),
+              items: _journals.map((j) {
+                final name = j['name']?.toString() ?? 'Journal';
+                return DropdownMenuItem(value: name, child: Text(name, style: FlexTypography.bodyMd));
+              }).toList(),
+              onChanged: (val) {
+                if (val == null) return;
+                final match = _journals.firstWhere(
+                  (j) => j['name']?.toString() == val,
+                  orElse: () => _journals.first,
+                );
+                setState(() {
+                  _selectedJournalLabel = val;
+                  _selectedJournalId = (match['id'] as num?)?.toInt();
+                });
+              },
+            ),
           const SizedBox(height: 14),
-
-          // Memo Note
           Text('MEMO / TRANSACTION REFERENCE', style: FlexTypography.labelSm),
           const SizedBox(height: 8),
           TextField(
@@ -171,28 +240,13 @@ class _PaymentRegisterSheetState extends ConsumerState<PaymentRegisterSheet> {
               prefixIcon: Icon(Icons.notes, size: 20),
             ),
           ),
-          const SizedBox(height: 12),
-
-          // Email Receipt Checkbox
-          Row(
-            children: [
-              Checkbox(
-                value: _sendReceiptEmail,
-                activeColor: FlexColors.primary,
-                onChanged: (val) => setState(() => _sendReceiptEmail = val ?? true),
-              ),
-              Text('Send Payment Receipt to Client via Email/SMS', style: FlexTypography.bodySm),
-            ],
-          ),
           const SizedBox(height: 16),
-
-          // Confirm Payment Button
           FlexButton(
-            label: 'Confirm Payment (account.payment)',
+            label: _submitting ? 'Posting…' : 'Confirm Payment',
             icon: Icons.check_circle,
             variant: FlexButtonVariant.primary,
             height: 48,
-            onPressed: _confirmPayment,
+            onPressed: (_submitting || _journals.isEmpty) ? null : _confirmPayment,
           ),
         ],
       ),

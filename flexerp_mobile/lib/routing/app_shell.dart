@@ -33,6 +33,7 @@ import '../features/website/shop_catalog_screen.dart';
 import '../features/vendor_admin/vendor_admin_hub_screen.dart';
 import '../features/vendor_admin/vendor_staff_screen.dart';
 import '../features/purchase/purchase_orders_screen.dart';
+import '../features/admin/approvals_screen.dart';
 import '../core/offline/offline_queue.dart';
 import '../core/live/live_sync.dart';
 
@@ -127,9 +128,11 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
               label: 'Executive',
             ),
             screen: ExecutiveHubScreen(
-              onNavigateToBarcode: () => setState(() => _currentTabIndex = 3),
+              onNavigateToBarcode: () => _openBarcodeScanner(context),
               onNavigateToCreateOrder: () => _openNewQuotation(context),
-              onNavigateToStock: () => setState(() => _currentTabIndex = 3),
+              onNavigateToStock: features.enableInventory
+                  ? () => _pushScreen(context, const VendorInventoryManagementScreen())
+                  : null,
               onNavigateToApprovals: () => setState(() => _currentTabIndex = 1),
             ),
           ),
@@ -178,11 +181,12 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
         ];
 
       case UserRole.vendorAdmin:
-        // Tab indices: 0 hub, 1 staff, then optional modules, profile last.
+        // Keep bottom nav lean: Hub, Staff, primary modules; secondary via hub push.
         var nextIndex = 2;
         final stockIndex = features.enableInventory ? nextIndex++ : -1;
         final posIndex = features.enablePos ? nextIndex++ : -1;
         if (features.enableSales) nextIndex++;
+        if (features.enableCrm) nextIndex++;
         if (features.enableInvoicing) nextIndex++;
         final purchaseIndex = features.enablePurchase ? nextIndex++ : -1;
         final tabs = <_ShellTab>[
@@ -201,6 +205,40 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
                   posIndex >= 0 ? () => setState(() => _currentTabIndex = posIndex) : null,
               onOpenPurchase: purchaseIndex >= 0
                   ? () => setState(() => _currentTabIndex = purchaseIndex)
+                  : null,
+              onOpenSales: features.enableSales
+                  ? () => _openNewQuotation(context)
+                  : null,
+              onOpenCrm: features.enableCrm
+                  ? () => _pushScreen(
+                        context,
+                        PipelineKanbanScreen(
+                          onNewQuotation: features.enableSales
+                              ? () => _openNewQuotation(context)
+                              : null,
+                        ),
+                      )
+                  : null,
+              onOpenWarehouse: features.enableWarehouse
+                  ? () => _pushScreen(context, const OperationsHubScreen())
+                  : null,
+              onOpenFinance: (features.enablePayments || features.enableInvoicing)
+                  ? () => _pushScreen(context, const FinanceHubScreen())
+                  : null,
+              onOpenBills: features.enableInvoicing
+                  ? () => _pushScreen(context, const VendorBillsScreen())
+                  : null,
+              onOpenHr: features.enableHr
+                  ? () => _pushScreen(context, const AttendanceKioskScreen())
+                  : null,
+              onOpenShop: features.enableWebsite
+                  ? () => _pushScreen(context, const ShopCatalogScreen())
+                  : null,
+              onOpenCustomers: features.hasAnyCommerce
+                  ? () => _pushScreen(context, const CustomerDirectoryScreen())
+                  : null,
+              onOpenPosOrders: features.enablePos
+                  ? () => _pushScreen(context, const PosOrdersScreen())
                   : null,
             ),
           ),
@@ -233,7 +271,7 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
                 activeIcon: Icons.point_of_sale,
                 label: 'POS',
               ),
-              screen: PosOrdersScreen(),
+              screen: PosRegisterScreen(),
             ),
           );
         }
@@ -247,6 +285,22 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
               ),
               screen: QuotationBuilderScreen(
                 onOrderConfirmed: () {},
+              ),
+            ),
+          );
+        }
+        if (features.enableCrm) {
+          tabs.add(
+            _ShellTab(
+              navItem: const FlexNavItem(
+                icon: Icons.view_kanban_outlined,
+                activeIcon: Icons.view_kanban,
+                label: 'CRM',
+              ),
+              screen: PipelineKanbanScreen(
+                onNewQuotation: features.enableSales
+                    ? () => _openNewQuotation(context)
+                    : null,
               ),
             ),
           );
@@ -413,7 +467,16 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
                 label: 'Dashboard',
               ),
               screen: ExecutiveHubScreen(
-                onNavigateToCreateOrder: () => _openNewQuotation(context),
+                onNavigateToBarcode: features.enableInventory
+                    ? () => _openBarcodeScanner(context)
+                    : null,
+                onNavigateToCreateOrder: features.enableSales
+                    ? () => _openNewQuotation(context)
+                    : null,
+                onNavigateToStock: features.enableInventory
+                    ? () => _pushScreen(context, const StockSearchScreen())
+                    : null,
+                onNavigateToApprovals: () => _openApprovals(context),
               ),
             ),
           );
@@ -481,7 +544,16 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
                 label: 'Dashboard',
               ),
               screen: ExecutiveHubScreen(
-                onNavigateToApprovals: () => _openNewQuotation(context),
+                onNavigateToApprovals: () => _openApprovals(context),
+                onNavigateToCreateOrder: features.enableSales
+                    ? () => _openNewQuotation(context)
+                    : null,
+                onNavigateToBarcode: features.enableInventory
+                    ? () => _openBarcodeScanner(context)
+                    : null,
+                onNavigateToStock: features.enableInventory
+                    ? () => _pushScreen(context, const StockSearchScreen())
+                    : null,
               ),
             ),
           );
@@ -544,7 +616,13 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
               label: 'Home',
             ),
             screen: ExecutiveHubScreen(
-              onNavigateToApprovals: () {},
+              onNavigateToApprovals: () => _openApprovals(context),
+              onNavigateToBarcode: features.enableInventory
+                  ? () => _openBarcodeScanner(context)
+                  : null,
+              onNavigateToStock: features.enableInventory
+                  ? () => _pushScreen(context, const StockSearchScreen())
+                  : null,
             ),
           ),
         );
@@ -602,6 +680,27 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
           onOrderConfirmed: () => Navigator.pop(context),
         ),
       ),
+    );
+  }
+
+  void _openApprovals(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ApprovalsScreen()),
+    );
+  }
+
+  void _openBarcodeScanner(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()),
+    );
+  }
+
+  void _pushScreen(BuildContext context, Widget screen) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => screen),
     );
   }
 }

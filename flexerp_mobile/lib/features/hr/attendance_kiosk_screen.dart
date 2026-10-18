@@ -40,6 +40,7 @@ class _AttendanceKioskScreenState extends ConsumerState<AttendanceKioskScreen> {
     final currentBranch = ref.watch(currentBranchProvider);
     final user = ref.watch(currentUserProvider);
     final attendance = ref.watch(attendanceProvider);
+    final gpsNote = ref.watch(attendanceGpsNoteProvider);
 
     final isCheckedIn = attendance != null && attendance.checkOut == null;
     final timeFormat = DateFormat('hh:mm:ss a');
@@ -125,12 +126,34 @@ class _AttendanceKioskScreenState extends ConsumerState<AttendanceKioskScreen> {
                         children: [
                           const Icon(Icons.location_on, color: FlexColors.success, size: 18),
                           const SizedBox(width: 6),
-                          Text('Inside Geofence: ${currentBranch.city}', style: FlexTypography.labelMd),
+                          Expanded(
+                            child: Text(
+                              attendance?.geofenceLocationName ??
+                                  'Geofence: ${currentBranch.city} (Colombo HQ if GPS unavailable)',
+                              style: FlexTypography.labelMd,
+                            ),
+                          ),
                         ],
                       ),
-                      const FlexBadge(text: 'ACCURACY: 4M', variant: FlexBadgeVariant.success),
+                      FlexBadge(
+                        text: gpsNote != null ? 'GPS DEFAULT' : 'GPS READY',
+                        variant: gpsNote != null ? FlexBadgeVariant.warning : FlexBadgeVariant.success,
+                      ),
                     ],
                   ),
+                  if (gpsNote != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      gpsNote,
+                      style: FlexTypography.bodySm.copyWith(color: FlexColors.warning),
+                    ),
+                  ] else ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Check-in uses device GPS when available; otherwise Colombo HQ (6.9271, 79.8612).',
+                      style: FlexTypography.bodySm.copyWith(color: FlexColors.textSecondaryDark),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -179,21 +202,35 @@ class _AttendanceKioskScreenState extends ConsumerState<AttendanceKioskScreen> {
 
             // Animated Large Action Button
             GestureDetector(
-              onTap: () {
+              onTap: () async {
                 if (isCheckedIn) {
-                  ref.read(attendanceProvider.notifier).checkOut();
+                  await ref.read(attendanceProvider.notifier).checkOut();
+                  if (!context.mounted) return;
+                  final note = ref.read(attendanceGpsNoteProvider);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Successfully Checked Out! Shift recorded.')),
+                    SnackBar(
+                      content: Text(
+                        note == null
+                            ? 'Successfully Checked Out! Shift recorded.'
+                            : 'Checked out. $note',
+                      ),
+                    ),
                   );
                 } else {
-                  ref.read(attendanceProvider.notifier).checkIn(
+                  await ref.read(attendanceProvider.notifier).checkIn(
                         employeeName: user?.name ?? 'Employee',
                         isInsideGeofence: true,
                       );
+                  if (!context.mounted) return;
+                  final note = ref.read(attendanceGpsNoteProvider);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
+                    SnackBar(
                       backgroundColor: FlexColors.success,
-                      content: Text('Successfully Checked In! Geofence verified.'),
+                      content: Text(
+                        note == null
+                            ? 'Successfully Checked In! Geofence verified.'
+                            : 'Checked in. $note',
+                      ),
                     ),
                   );
                 }

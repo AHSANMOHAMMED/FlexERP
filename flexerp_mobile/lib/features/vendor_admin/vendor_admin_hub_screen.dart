@@ -10,6 +10,7 @@ import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/executive_repository.dart';
 import '../../data/repositories/sales_repository.dart';
 import '../../data/repositories/vendor_repository.dart';
+import '../sales/sale_order_detail_sheet.dart';
 import 'vendor_staff_screen.dart';
 
 /// Vendor-slot dashboard — distinct from platform Super Admin ops console.
@@ -18,6 +19,15 @@ class VendorAdminHubScreen extends ConsumerStatefulWidget {
   final VoidCallback? onOpenStock;
   final VoidCallback? onOpenPos;
   final VoidCallback? onOpenPurchase;
+  final VoidCallback? onOpenSales;
+  final VoidCallback? onOpenCrm;
+  final VoidCallback? onOpenWarehouse;
+  final VoidCallback? onOpenFinance;
+  final VoidCallback? onOpenBills;
+  final VoidCallback? onOpenHr;
+  final VoidCallback? onOpenShop;
+  final VoidCallback? onOpenCustomers;
+  final VoidCallback? onOpenPosOrders;
 
   const VendorAdminHubScreen({
     super.key,
@@ -25,6 +35,15 @@ class VendorAdminHubScreen extends ConsumerStatefulWidget {
     this.onOpenStock,
     this.onOpenPos,
     this.onOpenPurchase,
+    this.onOpenSales,
+    this.onOpenCrm,
+    this.onOpenWarehouse,
+    this.onOpenFinance,
+    this.onOpenBills,
+    this.onOpenHr,
+    this.onOpenShop,
+    this.onOpenCustomers,
+    this.onOpenPosOrders,
   });
 
   @override
@@ -36,8 +55,10 @@ class _VendorAdminHubScreenState extends ConsumerState<VendorAdminHubScreen> {
   void initState() {
     super.initState();
     Future.microtask(() async {
-      await ref.read(executiveKpisProvider.notifier).syncFromServer();
-      await ref.read(saleOrdersProvider.notifier).syncFromOdoo();
+      try {
+        await ref.read(executiveKpisProvider.notifier).syncFromServer();
+        await ref.read(saleOrdersProvider.notifier).syncFromOdoo();
+      } catch (_) {}
     });
   }
 
@@ -151,9 +172,44 @@ class _VendorAdminHubScreenState extends ConsumerState<VendorAdminHubScreen> {
           if (features.enablePos)
             _ActionTile(
               icon: Icons.point_of_sale,
-              title: 'POS overview',
-              subtitle: 'Sessions and register activity',
+              title: 'POS register',
+              subtitle: 'Open cashier register',
               onTap: widget.onOpenPos,
+            ),
+          if (features.enablePos)
+            _ActionTile(
+              icon: Icons.receipt_long,
+              title: 'POS orders',
+              subtitle: 'Past register tickets',
+              onTap: widget.onOpenPosOrders,
+            ),
+          if (features.enableSales)
+            _ActionTile(
+              icon: Icons.request_quote,
+              title: 'New quotation',
+              subtitle: 'Create sale order in Odoo',
+              onTap: widget.onOpenSales,
+            ),
+          if (features.hasAnyCommerce)
+            _ActionTile(
+              icon: Icons.people,
+              title: 'Customers',
+              subtitle: 'Partner directory',
+              onTap: widget.onOpenCustomers,
+            ),
+          if (features.enableCrm)
+            _ActionTile(
+              icon: Icons.view_kanban,
+              title: 'CRM pipeline',
+              subtitle: 'Leads and stages',
+              onTap: widget.onOpenCrm,
+            ),
+          if (features.enableWarehouse)
+            _ActionTile(
+              icon: Icons.local_shipping,
+              title: 'Warehouse ops',
+              subtitle: 'Pickings and transfers',
+              onTap: widget.onOpenWarehouse,
             ),
           if (features.enablePurchase)
             _ActionTile(
@@ -162,8 +218,36 @@ class _VendorAdminHubScreenState extends ConsumerState<VendorAdminHubScreen> {
               subtitle: 'Vendor POs (independent module)',
               onTap: widget.onOpenPurchase,
             ),
+          if (features.enableInvoicing)
+            _ActionTile(
+              icon: Icons.payments_outlined,
+              title: 'Vendor bills',
+              subtitle: 'Supplier invoices / AP',
+              onTap: widget.onOpenBills,
+            ),
+          if (features.enablePayments || features.enableInvoicing)
+            _ActionTile(
+              icon: Icons.account_balance,
+              title: 'Finance hub',
+              subtitle: 'AR / AP / journals snapshot',
+              onTap: widget.onOpenFinance,
+            ),
+          if (features.enableHr)
+            _ActionTile(
+              icon: Icons.badge_outlined,
+              title: 'HR attendance',
+              subtitle: 'Check-in and time tracking',
+              onTap: widget.onOpenHr,
+            ),
+          if (features.enableWebsite)
+            _ActionTile(
+              icon: Icons.storefront,
+              title: 'Website shop',
+              subtitle: 'Catalog / cart (website feature)',
+              onTap: widget.onOpenShop,
+            ),
           const SizedBox(height: 20),
-          Text('Enabled modules (view)', style: FlexTypography.headlineMd),
+          Text('Enabled modules', style: FlexTypography.headlineMd),
           const SizedBox(height: 10),
           Wrap(
             spacing: 8,
@@ -175,6 +259,7 @@ class _VendorAdminHubScreenState extends ConsumerState<VendorAdminHubScreen> {
               _FeatureChip('CRM', features.enableCrm),
               _FeatureChip('Purchase', features.enablePurchase),
               _FeatureChip('Invoicing', features.enableInvoicing),
+              _FeatureChip('Warehouse', features.enableWarehouse),
               _FeatureChip('Website', features.enableWebsite),
               _FeatureChip('HR', features.enableHr),
             ],
@@ -183,9 +268,10 @@ class _VendorAdminHubScreenState extends ConsumerState<VendorAdminHubScreen> {
             const SizedBox(height: 20),
             Text('Recent sales (${orders.length})', style: FlexTypography.headlineMd),
             const SizedBox(height: 10),
-            ...orders.take(5).map((o) => Padding(
+            ...orders.take(8).map((o) => Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: FlexCard(
+                    onTap: () => showSaleOrderDetail(context, ref, o),
                     child: Row(
                       children: [
                         Expanded(

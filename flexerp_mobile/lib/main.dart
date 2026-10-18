@@ -80,6 +80,11 @@ class _FlexErpAppState extends ConsumerState<FlexErpApp> {
     return MaterialApp(
       title: 'FlexERP Mobile Suite',
       debugShowCheckedModeBanner: false,
+      locale: const Locale('en', 'LK'),
+      supportedLocales: const [
+        Locale('en', 'LK'),
+        Locale('en', 'US'),
+      ],
       theme: FlexTheme.darkTheme,
       home: _buildCurrentScreen(user != null),
     );

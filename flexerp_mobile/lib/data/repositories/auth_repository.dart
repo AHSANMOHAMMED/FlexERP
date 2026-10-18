@@ -193,6 +193,8 @@ class CurrentUserNotifier extends Notifier<AuthUser?> {
         vendorId: bootstrap?['vendor_id'] as String? ?? stored.vendorId,
         features: features,
         enforceHttps: stored.enforceHttps,
+        currencyName: bootstrap?['currency_name'] as String? ?? 'LKR',
+        currencySymbol: bootstrap?['currency_symbol'] as String? ?? 'Rs',
       );
       ref.read(serverConfigProvider.notifier).updateConfig(
             serverUrl: stored.serverUrl,
@@ -306,6 +308,8 @@ class CurrentUserNotifier extends Notifier<AuthUser?> {
       role: roleFromString(bootstrap['role'] as String? ?? user.role.name),
       groups: List<String>.from(bootstrap['groups'] as List? ?? user.groups),
       features: features,
+      currencyName: bootstrap['currency_name'] as String? ?? user.currencyName,
+      currencySymbol: bootstrap['currency_symbol'] as String? ?? user.currencySymbol,
     );
     await applyBootstrapFeatures(features);
   }
@@ -439,6 +443,8 @@ class AuthRepository {
       vendorId: bootstrap?['vendor_id'] as String? ?? 'VND-${companyId.toString().padLeft(3, '0')}',
       features: features,
       enforceHttps: enforceHttps,
+      currencyName: bootstrap?['currency_name'] as String? ?? 'LKR',
+      currencySymbol: bootstrap?['currency_symbol'] as String? ?? 'Rs',
     );
   }
 
