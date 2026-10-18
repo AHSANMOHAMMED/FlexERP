@@ -1,5 +1,0 @@
-id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
-access_flexerp_payment_link_user,flexerp.payment.link.user,model_flexerp_payment_link,base.group_user,1,1,1,0
-access_flexerp_payment_link_system,flexerp.payment.link.system,model_flexerp_payment_link,base.group_system,1,1,1,1
-access_flexerp_payment_gateway_user,flexerp.payment.gateway.user,model_flexerp_payment_gateway,base.group_user,1,0,0,0
-access_flexerp_payment_gateway_system,flexerp.payment.gateway.system,model_flexerp_payment_gateway,base.group_system,1,1,1,1

@@ -4,7 +4,8 @@
 Checks:
 1. Manifest validity (__manifest__.py is a valid dict with required keys).
 2. XML integrity (all XML views, data, and security files are well-formed).
-3. Security access file integrity (ir.model.access.csv has valid columns).
+3. Security access file integrity (Odoo 20 ``ir.access.csv`` has valid columns;
+   the legacy ``ir.model.access.csv`` / ``ir.model.access`` model no longer exists).
 """
 
 import ast
@@ -49,14 +50,26 @@ def validate_addons(addons_dir: str = "flexerp_addons") -> int:
 
         # 3. Security CSV Validation
         if "ir.model.access.csv" in files:
-            csv_path = os.path.join(root, "ir.model.access.csv")
+            errors.append(
+                f"[CSV] {os.path.join(root, 'ir.model.access.csv')}: legacy ir.model.access.csv is not "
+                "supported by Odoo 20, use security/ir.access.csv"
+            )
+        if "ir.access.csv" in files:
+            csv_path = os.path.join(root, "ir.access.csv")
             try:
                 with open(csv_path, "r", encoding="utf-8") as f:
                     reader = csv.reader(f)
                     header = next(reader, None)
-                    expected_header = ["id", "name", "model_id:id", "group_id:id", "perm_read", "perm_write", "perm_create", "perm_unlink"]
+                    expected_header = ["id", "name", "model_id", "group_id/id", "operation", "domain"]
                     if not header or header != expected_header:
-                        errors.append(f"[CSV] {csv_path}: Header does not match standard ir.model.access.csv format: {header}")
+                        errors.append(f"[CSV] {csv_path}: Header does not match Odoo 20 ir.access.csv format: {header}")
+                    for lineno, row in enumerate(reader, start=2):
+                        if len(row) != len(expected_header):
+                            errors.append(f"[CSV] {csv_path}:{lineno}: expected {len(expected_header)} columns, got {len(row)}")
+                            continue
+                        operation = row[4]
+                        if not operation or any(c not in "crud" for c in operation):
+                            errors.append(f"[CSV] {csv_path}:{lineno}: invalid operation {operation!r}")
             except Exception as exc:
                 errors.append(f"[CSV] {csv_path}: CSV error: {exc}")
 

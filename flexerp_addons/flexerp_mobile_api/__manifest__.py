@@ -21,7 +21,7 @@
     # Optional (soft): purchase, crm, hr, hr_attendance, hr_holidays —
     # routes return module_not_installed when model registry lacks them.
     'data': [
-        'security/ir.model.access.csv',
+        'security/ir.access.csv',
     ],
     'installable': True,
     'application': False,

@@ -4,7 +4,7 @@
     'version': '20.0.1.0.0',
     'category': 'Accounting',
     'summary': 'Vendor logo watermark + paid seal on FlexERP invoices',
-    'depends': ['account', 'flexerp_tenant_features'],
+    'depends': ['account'],
     'data': [
         'views/res_company_views.xml',
         'report/invoice_report.xml',

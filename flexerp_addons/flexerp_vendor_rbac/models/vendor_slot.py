@@ -3,7 +3,7 @@
 import secrets
 import string
 
-from odoo import api, fields, models
+from odoo import api, models
 from odoo.exceptions import AccessError, UserError, ValidationError
 
 
@@ -18,7 +18,7 @@ class FlexerpVendorSlot(models.AbstractModel):
             user.has_group('flexerp_vendor_rbac.group_platform_super_admin')
             or user.has_group('base.group_system')
         ):
-            raise AccessError('Only platform Super Admin can manage vendor slots.')
+            raise AccessError(self.env._('Only platform Super Admin can manage vendor slots.'))
 
     @api.model
     def _assert_company_access(self, company):
@@ -27,7 +27,7 @@ class FlexerpVendorSlot(models.AbstractModel):
         if user.has_group('flexerp_vendor_rbac.group_platform_super_admin') or user.has_group('base.group_system'):
             return company
         if not company or company.id not in user.company_ids.ids:
-            raise AccessError('You cannot access this vendor slot.')
+            raise AccessError(self.env._('You cannot access this vendor slot.'))
         return company
 
     @api.model
@@ -45,15 +45,14 @@ class FlexerpVendorSlot(models.AbstractModel):
         self._assert_platform_admin()
         name = (vals.get('name') or '').strip()
         if not name:
-            raise ValidationError('Vendor name is required.')
+            raise ValidationError(self.env._('Vendor name is required.'))
 
         vendor_code = (vals.get('vendor_code') or '').strip().upper()
         Company = self.env['res.company'].sudo()
         if vendor_code:
-            if Company.search_count([('flexerp_vendor_code', '=', vendor_code)]):
+            if Company.with_context(active_test=False).search_count([('flexerp_vendor_code', '=', vendor_code)]):
                 raise ValidationError(f'Vendor code {vendor_code} already exists.')
-        else:
-            vendor_code = f'VND-{fields.Datetime.now().strftime("%H%M%S")}'
+        # Empty code: res.company.create assigns a unique VND-<id> code.
 
         preset = vals.get('preset') or 'small_shop'
         if preset not in ('small_shop', 'mall', 'custom'):
@@ -66,7 +65,7 @@ class FlexerpVendorSlot(models.AbstractModel):
             'city': vals.get('city') or False,
             'street': vals.get('street') or vals.get('address') or False,
             'vat': vals.get('vat') or vals.get('tax_tin') or False,
-            'flexerp_vendor_code': vendor_code,
+            'flexerp_vendor_code': vendor_code or False,
             'flexerp_preset': preset if preset != 'custom' else 'small_shop',
             'flexerp_is_active_vendor': True,
         })
@@ -77,6 +76,7 @@ class FlexerpVendorSlot(models.AbstractModel):
             if vals.get('features'):
                 self.env['flexerp.feature.flag'].set_mobile_features(company.id, vals['features'])
 
+        vendor_code = company.flexerp_vendor_code
         admin_login = (vals.get('admin_login') or vals.get('email') or f'admin@{vendor_code.lower()}.lk').strip()
         admin_name = vals.get('admin_name') or f'{name} Admin'
         admin_password = vals.get('admin_password') or self._random_password()
@@ -93,7 +93,7 @@ class FlexerpVendorSlot(models.AbstractModel):
             'partner_id': partner.id,
             'company_id': company.id,
             'company_ids': [(6, 0, [company.id])],
-            'groups_id': [(6, 0, [
+            'group_ids': [(6, 0, [
                 self.env.ref('flexerp_vendor_rbac.group_vendor_admin').id,
             ])],
         })
@@ -114,7 +114,7 @@ class FlexerpVendorSlot(models.AbstractModel):
         self._assert_platform_admin()
         company = self.env['res.company'].sudo().browse(int(company_id))
         if not company.exists():
-            raise UserError('Vendor slot not found.')
+            raise UserError(self.env._('Vendor slot not found.'))
         company.flexerp_is_active_vendor = False
         return company.get_flexerp_tenant_payload()
 
@@ -129,7 +129,7 @@ class FlexerpVendorSlot(models.AbstractModel):
         is_vendor_admin = user.has_group('flexerp_vendor_rbac.group_vendor_admin')
         if not is_platform:
             if not is_vendor_admin:
-                raise AccessError('Not allowed to list users.')
+                raise AccessError(self.env._('Not allowed to list users.'))
             self._assert_company_access(company)
         users = self.env['res.users'].sudo().search([
             ('company_ids', 'in', company.id),
@@ -140,6 +140,9 @@ class FlexerpVendorSlot(models.AbstractModel):
         for u in users:
             role = 'employee'
             if u.has_group('flexerp_vendor_rbac.group_platform_super_admin') or u.has_group('base.group_system'):
+                if not is_platform:
+                    # Platform operators are not part of a vendor's staff list.
+                    continue
                 role = 'superAdmin'
             elif u.has_group('flexerp_vendor_rbac.group_vendor_admin'):
                 role = 'vendorAdmin'
@@ -168,14 +171,14 @@ class FlexerpVendorSlot(models.AbstractModel):
         is_vendor_admin = user.has_group('flexerp_vendor_rbac.group_vendor_admin')
         if not is_platform:
             if not is_vendor_admin:
-                raise AccessError('Not allowed to create users.')
+                raise AccessError(self.env._('Not allowed to create users.'))
             self._assert_company_access(company)
 
         role = vals.get('role') or 'posCashier'
         login = (vals.get('login') or vals.get('email') or '').strip()
         name = (vals.get('name') or login).strip()
         if not login or not name:
-            raise ValidationError('login and name are required.')
+            raise ValidationError(self.env._('login and name are required.'))
         password = vals.get('password') or self._random_password()
 
         if role == 'vendorAdmin':
@@ -196,7 +199,7 @@ class FlexerpVendorSlot(models.AbstractModel):
             'partner_id': partner.id,
             'company_id': company.id,
             'company_ids': [(6, 0, [company.id])],
-            'groups_id': [(6, 0, [group.id])],
+            'group_ids': [(6, 0, [group.id])],
         })
         return {
             'id': new_user.id,
@@ -211,7 +214,7 @@ class FlexerpVendorSlot(models.AbstractModel):
     def set_slot_user_active(self, user_id, active=True):
         target = self.env['res.users'].sudo().browse(int(user_id))
         if not target.exists():
-            raise UserError('User not found.')
+            raise UserError(self.env._('User not found.'))
         company = target.company_id
         user = self.env.user
         is_platform = (
@@ -220,9 +223,9 @@ class FlexerpVendorSlot(models.AbstractModel):
         )
         if not is_platform:
             if not user.has_group('flexerp_vendor_rbac.group_vendor_admin'):
-                raise AccessError('Not allowed.')
+                raise AccessError(self.env._('Not allowed.'))
             self._assert_company_access(company)
         if target.has_group('base.group_system') and not is_platform:
-            raise AccessError('Cannot modify platform administrators.')
+            raise AccessError(self.env._('Cannot modify platform administrators.'))
         target.active = bool(active)
         return {'id': target.id, 'active': target.active}

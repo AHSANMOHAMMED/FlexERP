@@ -1,6 +1,7 @@
 # Part of FlexERP. See LICENSE file for full copyright and licensing details.
 
 from odoo import api, fields, models
+from odoo.exceptions import AccessError
 
 # Canonical keys consumed by flexerp_mobile + flexerp_mobile_api.
 # Each key is independently toggleable — no key requires another.
@@ -72,18 +73,41 @@ class FlexerpFeatureFlag(models.Model):
         readonly=True,
     )
 
-    _sql_constraints = [
-        (
-            'company_key_uniq',
-            'unique(company_id, key)',
-            'Each company may only have one flag per feature key.',
-        ),
-    ]
+    _company_key_uniq = models.Constraint(
+        'unique(company_id, key)',
+        'Each company may only have one flag per feature key.',
+    )
+
+    @api.model
+    def _is_platform_admin(self):
+        """Platform Super Admin (or system admin, implied by it).
+
+        ``base.group_erp_manager`` is intentionally NOT a platform admin.
+        """
+        if self.env.su:
+            return True
+        user = self.env.user
+        if user.has_group('base.group_system'):
+            return True
+        group = self.env.ref('flexerp_vendor_rbac.group_platform_super_admin', raise_if_not_found=False)
+        return bool(group) and user.has_group('flexerp_vendor_rbac.group_platform_super_admin')
+
+    @api.model
+    def _check_company_allowed(self, company):
+        """Only platform admins may read/write flags of companies they don't belong to."""
+        if not company or not company.exists():
+            raise AccessError(self.env._('Company / vendor slot not found.'))
+        if self._is_platform_admin():
+            return company
+        if company.id not in self.env.user.company_ids.ids:
+            raise AccessError(self.env._('You cannot access feature flags of this vendor slot.'))
+        return company
 
     @api.model
     def ensure_flags_for_company(self, company, preset='small_shop'):
         """Create missing flags for a company using a named preset."""
         company = company or self.env.company
+        self._check_company_allowed(company)
         defaults = PRESETS.get(preset) or PRESETS['small_shop']
         Flag = self.sudo()
         existing = {
@@ -103,12 +127,16 @@ class FlexerpFeatureFlag(models.Model):
     @api.model
     def get_mobile_features(self, company_id=None):
         """Return {key: bool} for the given company (defaults to current)."""
-        company = self.env['res.company'].browse(company_id) if company_id else self.env.company
+        company = self.env['res.company'].browse(int(company_id)) if company_id else self.env.company
         if not company:
             company = self.env.user.company_id
-        self.ensure_flags_for_company(company)
+        self._check_company_allowed(company)
+        # Read-only: missing flags fall back to the company preset defaults
+        # (no write, so this is safe in readonly routes).
+        preset = company.sudo().flexerp_preset
+        defaults = PRESETS.get(preset) or PRESETS['small_shop']
+        result = {key: bool(defaults.get(key, False)) for key in FEATURE_KEYS}
         flags = self.sudo().search([('company_id', '=', company.id)])
-        result = {key: False for key in FEATURE_KEYS}
         for flag in flags:
             result[flag.key] = bool(flag.enabled)
         return result
@@ -118,15 +146,10 @@ class FlexerpFeatureFlag(models.Model):
         """Upsert feature map for one company only. Never touches other vendors."""
         company = self.env['res.company'].browse(int(company_id))
         if not company.exists():
-            raise ValueError('Company / vendor slot not found.')
-        # Platform Super Admin may write any slot; others need company write access.
-        user = self.env.user
-        is_platform = (
-            user.has_group('base.group_system')
-            or user.has_group('base.group_erp_manager')
-            or user.has_group('flexerp_vendor_rbac.group_platform_super_admin')
-        )
-        if not is_platform:
+            raise ValueError(self.env._('Company / vendor slot not found.'))
+        # Platform Super Admin may write any slot; others need membership + company write access.
+        if not self._is_platform_admin():
+            self._check_company_allowed(company)
             company.check_access('write')
         self.ensure_flags_for_company(company)
         Flag = self.sudo()

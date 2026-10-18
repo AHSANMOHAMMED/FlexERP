@@ -1,5 +1,9 @@
 [options]
-admin_passwd = admin
+; Master password protecting the database manager (create/drop/backup/restore).
+; NEVER keep a default: replace with a long random secret, e.g.
+;   python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+; (Odoo hashes it on first save). Also consider list_db = False in production.
+admin_passwd = CHANGE_ME_TO_A_STRONG_RANDOM_SECRET
 db_host = False
 db_port = False
 db_user = odoo

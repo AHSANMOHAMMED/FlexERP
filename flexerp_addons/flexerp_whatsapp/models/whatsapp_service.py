@@ -19,10 +19,10 @@ class FlexerpWhatsappService(models.AbstractModel):
     def _config(self):
         ICP = self.env['ir.config_parameter'].sudo()
         return {
-            'provider': ICP.get_param('flexerp.whatsapp.provider', 'meta') or 'meta',
-            'endpoint': (ICP.get_param('flexerp.whatsapp.endpoint') or 'https://graph.facebook.com/v19.0').strip(),
-            'phone_number_id': (ICP.get_param('flexerp.whatsapp.phone_number_id') or '').strip(),
-            'token': (ICP.get_param('flexerp.whatsapp.token') or '').strip(),
+            'provider': ICP.get_str('flexerp.whatsapp.provider', 'meta') or 'meta',
+            'endpoint': (ICP.get_str('flexerp.whatsapp.endpoint') or 'https://graph.facebook.com/v19.0').strip(),
+            'phone_number_id': (ICP.get_str('flexerp.whatsapp.phone_number_id') or '').strip(),
+            'token': (ICP.get_str('flexerp.whatsapp.token') or '').strip(),
         }
 
     @api.model
@@ -34,7 +34,8 @@ class FlexerpWhatsappService(models.AbstractModel):
         return f'https://wa.me/{digits}?text={text}' if digits else False
 
     @api.model
-    def send_text(self, phone, message, media_url=None):
+    def _send_text(self, phone, message, media_url=None):
+        """Send via WhatsApp Cloud API. Private: callers must check access first."""
         cfg = self._config()
         wa_me = self.build_wa_me_link(phone, message)
         if not cfg['phone_number_id'] or not cfg['token']:
@@ -73,7 +74,7 @@ class FlexerpWhatsappService(models.AbstractModel):
                 raw = resp.read().decode('utf-8')
                 try:
                     data = json.loads(raw)
-                except Exception:
+                except ValueError:
                     data = {'raw': raw}
                 return {
                     'ok': True,
@@ -89,7 +90,7 @@ class FlexerpWhatsappService(models.AbstractModel):
                 'message': f'HTTP {e.code}: {e.reason}',
                 'wa_me_url': wa_me,
             }
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - network adapter must never crash the API
             _logger.warning('WhatsApp send failed: %s', e)
             return {
                 'ok': False,

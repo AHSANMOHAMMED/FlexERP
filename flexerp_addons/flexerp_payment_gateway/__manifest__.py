@@ -7,7 +7,7 @@
     'depends': ['base'],
     'data': [
         'data/payment_parameters.xml',
-        'security/ir.model.access.csv',
+        'security/ir.access.csv',
     ],
     'installable': True,
     'application': False,

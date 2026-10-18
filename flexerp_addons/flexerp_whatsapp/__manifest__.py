@@ -7,7 +7,6 @@
     'depends': ['base', 'mail'],
     'data': [
         'data/whatsapp_parameters.xml',
-        'security/ir.model.access.csv',
     ],
     'installable': True,
     'application': False,

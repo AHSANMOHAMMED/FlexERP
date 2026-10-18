@@ -10,7 +10,8 @@ class FlexerpMobileController(http.Controller):
     def _api(self):
         return request.env['flexerp.mobile.api']
 
-    @route('/flexerp/mobile/bootstrap', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
+    # Not readonly: bootstrap seeds missing feature flags for the slot.
+    @route('/flexerp/mobile/bootstrap', type='jsonrpc', auth='user', methods=['POST'])
     def bootstrap(self, company_id=None, app_version=None, **kwargs):
         return self._api().bootstrap(company_id=company_id, app_version=app_version)
 
@@ -61,12 +62,12 @@ class FlexerpMobileController(http.Controller):
         return self._api().pos_list_configs()
 
     @route('/flexerp/mobile/pos/session/open', type='jsonrpc', auth='user', methods=['POST'])
-    def pos_session_open(self, config_id=None, **kwargs):
-        return self._api().pos_open_session(config_id)
+    def pos_session_open(self, config_id=None, opening_cash=None, **kwargs):
+        return self._api().pos_open_session(config_id, opening_cash=opening_cash)
 
     @route('/flexerp/mobile/pos/session/close', type='jsonrpc', auth='user', methods=['POST'])
-    def pos_session_close(self, session_id=None, **kwargs):
-        return self._api().pos_close_session(session_id)
+    def pos_session_close(self, session_id=None, counted_cash=None, **kwargs):
+        return self._api().pos_close_session(session_id, counted_cash=counted_cash)
 
     @route('/flexerp/mobile/pos/products', type='jsonrpc', auth='user', readonly=True, methods=['POST'])
     def pos_products(self, config_id=None, limit=500, **kwargs):
@@ -144,8 +145,8 @@ class FlexerpMobileController(http.Controller):
         return self._api().stock_picking_detail(picking_id)
 
     @route('/flexerp/mobile/stock/picking/validate', type='jsonrpc', auth='user', methods=['POST'])
-    def stock_picking_validate(self, picking_id=None, **kwargs):
-        return self._api().stock_validate_picking(picking_id)
+    def stock_picking_validate(self, picking_id=None, create_backorder=True, **kwargs):
+        return self._api().stock_validate_picking(picking_id, create_backorder=create_backorder)
 
     @route('/flexerp/mobile/stock/adjust', type='jsonrpc', auth='user', methods=['POST'])
     def stock_adjust(self, product_id=None, quantity_delta=0, location_id=None, reason=None, **kwargs):
@@ -202,9 +203,9 @@ class FlexerpMobileController(http.Controller):
         return self._api().whatsapp_send_invoice(phone, move_id=move_id, pos_order_id=pos_order_id)
 
     @route('/flexerp/mobile/payment/register', type='jsonrpc', auth='user', methods=['POST'])
-    def payment_register(self, move_id=None, amount=None, journal_id=None, payment_date=None, memo=None, **kwargs):
+    def payment_register(self, move_id=None, amount=None, journal_id=None, payment_date=None, memo=None, uuid=None, **kwargs):
         return self._api().register_invoice_payment(
-            move_id, amount=amount, journal_id=journal_id, payment_date=payment_date, memo=memo,
+            move_id, amount=amount, journal_id=journal_id, payment_date=payment_date, memo=memo, uuid=uuid,
         )
 
     @route('/flexerp/mobile/payment/link/create', type='jsonrpc', auth='user', methods=['POST'])
@@ -233,9 +234,9 @@ class FlexerpMobileController(http.Controller):
         return self._api().hr_submit_leave(holiday_status_id, date_from, date_to, name=name)
 
     @route('/flexerp/mobile/hr/attendance', type='jsonrpc', auth='user', methods=['POST'])
-    def hr_attendance(self, check_in=True, latitude=None, longitude=None, **kwargs):
+    def hr_attendance(self, check_in=True, latitude=None, longitude=None, timestamp=None, **kwargs):
         return self._api().hr_attendance_check(
-            check_in=check_in, latitude=latitude, longitude=longitude,
+            check_in=check_in, latitude=latitude, longitude=longitude, timestamp=timestamp,
         )
 
     # Executive

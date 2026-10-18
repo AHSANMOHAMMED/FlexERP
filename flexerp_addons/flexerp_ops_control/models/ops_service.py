@@ -22,17 +22,17 @@ class FlexerpOpsService(models.AbstractModel):
             user.has_group('base.group_system')
             or user.has_group('flexerp_vendor_rbac.group_platform_super_admin')
         ):
-            raise AccessError('Only platform Super Admin can control ops.')
+            raise AccessError(self.env._('Only platform Super Admin can control ops.'))
 
     @api.model
     def _config(self):
         ICP = self.env['ir.config_parameter'].sudo()
         return {
-            'provider_type': ICP.get_param('flexerp.ops.provider_type', 'docker') or 'docker',
-            'endpoint': (ICP.get_param('flexerp.ops.endpoint') or '').strip(),
-            'token': (ICP.get_param('flexerp.ops.token') or '').strip(),
-            'workers': ICP.get_param('flexerp.ops.workers', '4'),
-            'db_maxconn': ICP.get_param('flexerp.ops.db_maxconn', '64'),
+            'provider_type': ICP.get_str('flexerp.ops.provider_type', 'docker') or 'docker',
+            'endpoint': (ICP.get_str('flexerp.ops.endpoint') or '').strip(),
+            'token': (ICP.get_str('flexerp.ops.token') or '').strip(),
+            'workers': ICP.get_str('flexerp.ops.workers', '4'),
+            'db_maxconn': ICP.get_str('flexerp.ops.db_maxconn', '64'),
         }
 
     @api.model
@@ -61,7 +61,7 @@ class FlexerpOpsService(models.AbstractModel):
                 body = resp.read().decode('utf-8')
                 try:
                     data = json.loads(body)
-                except Exception:
+                except ValueError:
                     data = {'raw': body}
                 return {
                     'ok': True,
@@ -78,7 +78,7 @@ class FlexerpOpsService(models.AbstractModel):
                 'provider_type': cfg['provider_type'],
                 'message': f'HTTP {e.code}: {e.reason}',
             }
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - network adapter must never crash the API
             _logger.warning('Ops provider call failed: %s', e)
             return {
                 'ok': False,
@@ -111,7 +111,7 @@ class FlexerpOpsService(models.AbstractModel):
             'active_vendor_slots': company_count,
             'active_users': user_count,
             'provider': provider,
-            'pool': self.pool_stats(internal=True),
+            'pool': self._pool_stats(),
             'odoo_online': True,
         }
 
@@ -131,9 +131,12 @@ class FlexerpOpsService(models.AbstractModel):
         return self._call_provider('stop')
 
     @api.model
-    def pool_stats(self, internal=False):
-        if not internal:
-            self._assert_platform_admin()
+    def pool_stats(self):
+        self._assert_platform_admin()
+        return self._pool_stats()
+
+    @api.model
+    def _pool_stats(self):
         cfg = self._config()
         return {
             'workers_configured': int(cfg['workers'] or 0),

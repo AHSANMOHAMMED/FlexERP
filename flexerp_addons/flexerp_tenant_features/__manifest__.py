@@ -6,7 +6,7 @@
     'summary': 'Per-company mobile feature flags and vendor phase presets',
     'depends': ['base', 'web'],
     'data': [
-        'security/ir.model.access.csv',
+        'security/ir.access.csv',
         'data/feature_flag_data.xml',
         'views/feature_flag_views.xml',
         'views/res_company_views.xml',

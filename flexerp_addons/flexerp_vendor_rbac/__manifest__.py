@@ -13,7 +13,6 @@
     ],
     'data': [
         'security/flexerp_security.xml',
-        'security/ir.model.access.csv',
     ],
     'installable': True,
     'application': False,

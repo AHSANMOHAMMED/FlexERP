@@ -1,0 +1,4 @@
+id,name,model_id,group_id/id,operation,domain
+access_flexerp_payment_link_user,flexerp.payment.link.user,flexerp.payment.link,base.group_user,r,
+access_flexerp_payment_link_system,flexerp.payment.link.system,flexerp.payment.link,base.group_system,crud,
+rule_flexerp_payment_link_company,FlexERP pay link multi-company,flexerp.payment.link,,crud,"[('company_id', 'in', company_ids)]"

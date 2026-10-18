@@ -5,7 +5,6 @@
         <field name="model">account.move</field>
         <field name="report_type">qweb-pdf</field>
         <field name="report_name">flexerp_invoice_branding.report_branded_invoice</field>
-        <field name="report_file">flexerp_invoice_branding.report_branded_invoice</field>
         <field name="print_report_name">'Invoice-%s' % (object.name)</field>
         <field name="binding_model_id" ref="account.model_account_move"/>
         <field name="binding_type">report</field>

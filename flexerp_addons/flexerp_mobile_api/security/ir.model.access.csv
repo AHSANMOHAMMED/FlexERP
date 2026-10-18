@@ -1,5 +1,0 @@
-id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
-access_flexerp_mobile_api_user,flexerp.mobile.api.user,model_flexerp_mobile_api,base.group_user,1,0,0,0
-access_flexerp_mobile_api_system,flexerp.mobile.api.system,model_flexerp_mobile_api,base.group_system,1,1,1,1
-access_flexerp_live_event_user,flexerp.live.event.user,model_flexerp_live_event,base.group_user,1,0,0,0
-access_flexerp_live_event_system,flexerp.live.event.system,model_flexerp_live_event,base.group_system,1,1,1,1

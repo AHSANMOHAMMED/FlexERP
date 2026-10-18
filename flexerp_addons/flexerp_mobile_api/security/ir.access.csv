@@ -1,0 +1,4 @@
+id,name,model_id,group_id/id,operation,domain
+access_flexerp_live_event_user,flexerp.live.event.user,flexerp.live.event,base.group_user,r,
+access_flexerp_live_event_system,flexerp.live.event.system,flexerp.live.event,base.group_system,crud,
+rule_flexerp_live_event_company,FlexERP live event multi-company,flexerp.live.event,,crud,"[('company_id', 'in', company_ids)]"

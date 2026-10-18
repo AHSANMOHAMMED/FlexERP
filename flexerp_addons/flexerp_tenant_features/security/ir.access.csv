@@ -1,0 +1,4 @@
+id,name,model_id,group_id/id,operation,domain
+access_flexerp_feature_flag_user,flexerp.feature.flag.user,flexerp.feature.flag,base.group_user,r,
+access_flexerp_feature_flag_system,flexerp.feature.flag.system,flexerp.feature.flag,base.group_system,crud,
+rule_flexerp_feature_flag_company,FlexERP feature flag multi-company,flexerp.feature.flag,,crud,"[('company_id', 'in', company_ids)]"

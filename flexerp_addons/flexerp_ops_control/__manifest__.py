@@ -9,7 +9,6 @@
         'flexerp_mobile_api',
     ],
     'data': [
-        'security/ir.model.access.csv',
         'data/ops_parameters.xml',
     ],
     'installable': True,

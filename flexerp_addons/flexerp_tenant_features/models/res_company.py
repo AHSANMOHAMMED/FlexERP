@@ -33,13 +33,31 @@ class ResCompany(models.Model):
         default=True,
     )
 
+    _flexerp_vendor_code_uniq = models.Constraint(
+        'unique(flexerp_vendor_code)',
+        'This FlexERP vendor code is already used by another company.',
+    )
+
+    def _flexerp_unique_vendor_code(self):
+        """Return a vendor code derived from the company id that is not used yet."""
+        self.ensure_one()
+        Company = self.sudo().with_context(active_test=False)
+        base = f'VND-{self.id:03d}'
+        code = base
+        suffix = 1
+        while Company.search_count([('flexerp_vendor_code', '=', code), ('id', '!=', self.id)]):
+            suffix += 1
+            code = f'{base}-{suffix}'
+        return code
+
     @api.model_create_multi
     def create(self, vals_list):
         companies = super().create(vals_list)
-        Flag = self.env['flexerp.feature.flag']
+        # Company creation is already access-checked; seeding its flags is internal.
+        Flag = self.env['flexerp.feature.flag'].sudo()
         for company in companies:
             if not company.flexerp_vendor_code:
-                company.flexerp_vendor_code = f'VND-{company.id:03d}'
+                company.flexerp_vendor_code = company._flexerp_unique_vendor_code()
             preset = company.flexerp_preset if company.flexerp_preset != 'custom' else 'small_shop'
             Flag.ensure_flags_for_company(company, preset=preset)
         return companies
